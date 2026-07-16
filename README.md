@@ -100,3 +100,8 @@ python -m mcp_mysql
 ```
 
 El servidor usa transporte `stdio` (estándar para clientes MCP).
+
+## Prueba
+
+  ![Image Test](/img/test.png)
+
