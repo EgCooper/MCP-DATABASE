@@ -1,22 +1,61 @@
 # MCP Database
 
-Servidores MCP en Python para conectar asistentes de IA (Cursor, Claude, Gemini, etc.) a **MySQL**, **Oracle** y **SQL Server**.
+Servidores MCP en Python para conectar asistentes de IA (Cursor, Claude, Gemini, etc.) a **MySQL**, **Oracle**, **SQL Server** e **Informix**.
 
-Hay tres servidores independientes en el mismo repo:
+Hay cuatro servidores independientes en el mismo repo:
 
-| Servidor | Módulo | Entrada MCP |
-|----------|--------|-------------|
-| MySQL | `mcp_mysql` | `mysql` |
-| Oracle | `mcp_oracle` | `oracle` |
-| SQL Server | `mcp_sqlserver` | `sqlserver` |
+| Servidor | Módulo | Entrada MCP | Driver extra en la PC |
+|----------|--------|-------------|------------------------|
+| MySQL | `mcp_mysql` | `mysql` | No (pip alcanza) |
+| Oracle | `mcp_oracle` | `oracle` | No (pip / thin mode) |
+| SQL Server | `mcp_sqlserver` | `sqlserver` | **Sí** — ODBC Driver 17/18 |
+| Informix | `mcp_informix` | `informix` | **Sí** — Client SDK / ODBC IBM |
 
 ## Requisitos
 
 - Python 3.11+
-- Acceso al servidor MySQL, Oracle y/o SQL Server que vayas a usar
-- Para SQL Server: driver ODBC instalado (p. ej. **ODBC Driver 18 for SQL Server**)
+- Acceso a la(s) base(s) que vayas a usar
+- **SQL Server e Informix:** además de `pip install -e .`, debes instalar el driver nativo en cada máquina (ver sección abajo)
 
-## Instalación
+## Drivers adicionales (obligatorio para SQL Server e Informix)
+
+`pip install -e .` instala `pyodbc`, pero **no** instala el driver del sistema. Sin eso, la conexión falla.
+
+### SQL Server — ODBC Driver
+
+1. Descarga e instala **Microsoft ODBC Driver 18 for SQL Server** (x64):  
+   https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server
+2. Si el instalador lo pide, instala también el [Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
+3. Verifica en PowerShell:
+
+```powershell
+Get-OdbcDriver | Where-Object { $_.Name -like "*SQL Server*" }
+```
+
+4. En `.env` usa el nombre exacto del driver, por ejemplo:
+
+```env
+SQLSERVER_DRIVER=ODBC Driver 18 for SQL Server
+```
+
+### Informix — Client SDK / ODBC
+
+1. Descarga el **IBM Informix Client SDK** (incluye el ODBC Driver). Requiere cuenta/licencia IBM o HCL:  
+   - https://www.ibm.com/support/pages/download-informix-products  
+   - https://www.ibm.com/support/fixcentral  
+   - HCL/Actian ESD: https://esd.actian.com/
+2. Instala el Client SDK para **Windows x64**.
+3. Verifica en *Orígenes de datos ODBC (64 bits)* que aparezca algo como `IBM INFORMIX ODBC DRIVER`.
+4. En `.env`:
+
+```env
+INFORMIX_DRIVER=IBM INFORMIX ODBC DRIVER
+INFORMIX_SERVER=ol_informix1410
+```
+
+`INFORMIX_SERVER` es el nombre del servidor Informix (`INFORMIXSERVER`), no solo el host.
+
+## Instalación del proyecto
 
 ```bash
 git clone <url-del-repo>
@@ -34,7 +73,7 @@ Activa el entorno virtual:
 source .venv/bin/activate
 ```
 
-Instala el paquete (incluye los tres servidores):
+Instala el paquete (incluye los cuatro servidores):
 
 ```bash
 pip install -e .
@@ -50,58 +89,28 @@ Copy-Item .env.example .env
 cp .env.example .env
 ```
 
-Edita `.env` con las bases que uses:
-
-```env
-# MySQL
-MYSQL_HOST=localhost
-MYSQL_PORT=3306
-MYSQL_USER=root
-MYSQL_PASSWORD=your_password
-MYSQL_DATABASE=your_database
-
-# Oracle (DSN o HOST+PORT+SERVICE)
-ORACLE_USER=your_user
-ORACLE_PASSWORD=your_password
-ORACLE_HOST=localhost
-ORACLE_PORT=1521
-ORACLE_SERVICE=ORCL
-# ORACLE_DSN=localhost:1521/ORCL
-
-# SQL Server
-SQLSERVER_HOST=localhost
-SQLSERVER_PORT=1433
-SQLSERVER_DATABASE=your_database
-SQLSERVER_USER=sa
-SQLSERVER_PASSWORD=your_password
-SQLSERVER_DRIVER=ODBC Driver 18 for SQL Server
-SQLSERVER_TRUST_SERVER_CERTIFICATE=yes
-```
+Edita `.env` con las bases que uses (ver `.env.example`).
 
 ## Configurar el cliente MCP
 
 Cada servidor se registra por separado (fusiona sin borrar otros MCPs):
 
 ```bash
-# MySQL → entrada "mysql" en ~/.cursor/mcp.json
 python -m mcp_mysql setup
-
-# Oracle → entrada "oracle"
 python -m mcp_oracle setup
-
-# SQL Server → entrada "sqlserver"
 python -m mcp_sqlserver setup
+python -m mcp_informix setup
 ```
 
 Opciones comunes:
 
 ```bash
-python -m mcp_sqlserver setup --client claude
-python -m mcp_sqlserver setup --dry-run
-python -m mcp_sqlserver setup --print
+python -m mcp_informix setup --client claude
+python -m mcp_informix setup --dry-run
+python -m mcp_informix setup --print
 ```
 
-También: `mcp-mysql-setup` / `mcp-oracle-setup` / `mcp-sqlserver-setup`.
+También: `mcp-mysql-setup` / `mcp-oracle-setup` / `mcp-sqlserver-setup` / `mcp-informix-setup`.
 
 Recarga los MCP del cliente y prueba con `test_connection`.
 
@@ -114,10 +123,9 @@ Recarga los MCP del cliente y prueba con `test_connection`.
 | Claude Windows | `./`  |
 | Claude Linux | `/home/user/.claude.json`  |
 
-
 ## Tools disponibles
 
-Las mismas tools en los tres servidores:
+Las mismas tools en los cuatro servidores:
 
 | Tool | Descripción |
 |------|-------------|
@@ -126,19 +134,20 @@ Las mismas tools en los tres servidores:
 | `describe_table` | Columnas de una tabla |
 | `execute_query` | Consultas de solo lectura |
 
+**MySQL:** `SELECT`, `SHOW`, `DESCRIBE`, `EXPLAIN`, `WITH` (usa `LIMIT`).
 
-**MySQL:** permite `SELECT`, `SHOW`, `DESCRIBE`, `EXPLAIN`, `WITH` (usa `LIMIT`).
+**Oracle:** `SELECT` / `WITH` (`FETCH FIRST n ROWS ONLY`).
 
-**Oracle:** permite `SELECT` y `WITH` (usa `FETCH FIRST n ROWS ONLY`).
+**SQL Server:** `SELECT` / `WITH` (inyecta `TOP`).
 
-**SQL Server:** permite `SELECT` y `WITH` (inyecta `TOP` en `SELECT` sin límite).
+**Informix:** `SELECT` / `WITH` (inyecta `FIRST n`).
 
 ## Notas
 
-- `python -m mcp_mysql` / `python -m mcp_oracle` / `python -m mcp_sqlserver` arrancan el servidor stdio; lo lanza el cliente.
+- Los comandos `python -m mcp_*` arrancan el servidor stdio; lo lanza el cliente.
 - Las credenciales viven en `.env`, no en el JSON del cliente.
-- Oracle usa el driver `oracledb` en modo thin (sin Instant Client, en la mayoría de casos).
-- SQL Server usa `pyodbc` + ODBC Driver 17/18.
+- MySQL y Oracle no requieren instalador de driver aparte (en el flujo típico).
+- SQL Server e Informix **sí** requieren driver/SDK instalado en el sistema además de `pyodbc`.
 
 ## Estructura
 
@@ -149,7 +158,8 @@ MCP-DATABASE/
 ├── src/
 │   ├── mcp_mysql/
 │   ├── mcp_oracle/
-│   └── mcp_sqlserver/
+│   ├── mcp_sqlserver/
+│   └── mcp_informix/
 └── README.md
 ```
 

@@ -1,4 +1,4 @@
-"""Install / print MCP client config for the SQL Server server."""
+"""Install / print MCP client config for the Informix server."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 
-SERVER_NAME = "sqlserver"
+SERVER_NAME = "informix"
 
 
 def project_root() -> Path:
@@ -32,18 +32,18 @@ def resolve_python(root: Path) -> Path:
     return Path(sys.executable)
 
 
-def sqlserver_server_entry(root: Path, python: Path) -> dict[str, Any]:
-    """Build the sqlserver MCP server entry (no credentials)."""
+def informix_server_entry(root: Path, python: Path) -> dict[str, Any]:
+    """Build the informix MCP server entry (no credentials)."""
     return {
         "command": str(python),
-        "args": ["-m", "mcp_sqlserver"],
+        "args": ["-m", "mcp_informix"],
         "cwd": str(root),
     }
 
 
 def build_snippet(root: Path, python: Path) -> dict[str, Any]:
     """Build a standalone mcpServers snippet."""
-    return {"mcpServers": {SERVER_NAME: sqlserver_server_entry(root, python)}}
+    return {"mcpServers": {SERVER_NAME: informix_server_entry(root, python)}}
 
 
 def default_config_path(client: str) -> Path:
@@ -89,7 +89,7 @@ def load_config(path: Path) -> dict[str, Any]:
 
 
 def merge_server(config: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]:
-    """Insert/replace the sqlserver server without touching other servers."""
+    """Insert/replace the informix server without touching other servers."""
     merged = dict(config)
     servers = dict(merged.get("mcpServers") or {})
     servers[SERVER_NAME] = entry
@@ -107,27 +107,28 @@ def _collect_warnings(root: Path) -> list[str]:
 
     if not (root / ".env").exists():
         warnings.append(
-            "Missing .env - copy .env.example to .env and set SQLSERVER_* credentials."
+            "Missing .env - copy .env.example to .env and set INFORMIX_* credentials."
         )
     else:
         text = (root / ".env").read_text(encoding="utf-8", errors="ignore")
-        has_sqlserver = any(
+        has_informix = any(
             line.strip().startswith(
                 (
-                    "SQLSERVER_HOST=",
-                    "SQLSERVER_DATABASE=",
-                    "SQLSERVER_CONNECTION_STRING=",
+                    "INFORMIX_HOST=",
+                    "INFORMIX_SERVER=",
+                    "INFORMIX_DATABASE=",
+                    "INFORMIX_CONNECTION_STRING=",
                 )
             )
             for line in text.splitlines()
         )
-        if not has_sqlserver:
+        if not has_informix:
             warnings.append(
-                "No SQLSERVER_* variables found in .env - add SQL Server credentials before connecting."
+                "No INFORMIX_* variables found in .env - add Informix credentials before connecting."
             )
 
     warnings.append(
-        "SQL Server also requires Microsoft ODBC Driver 17/18 installed on this machine."
+        "Informix also requires the IBM Informix Client SDK / ODBC Driver installed on this machine."
     )
 
     has_venv = any(
@@ -149,9 +150,9 @@ def _collect_warnings(root: Path) -> list[str]:
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="python -m mcp_sqlserver setup",
+        prog="python -m mcp_informix setup",
         description=(
-            "Install the sqlserver MCP server into a client config, "
+            "Install the informix MCP server into a client config, "
             "or print the JSON snippet."
         ),
     )
@@ -184,7 +185,7 @@ def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
     root = project_root()
     python = resolve_python(root)
-    entry = sqlserver_server_entry(root, python)
+    entry = informix_server_entry(root, python)
 
     for warning in _collect_warnings(root):
         print(f"Warning: {warning}", file=sys.stderr)
