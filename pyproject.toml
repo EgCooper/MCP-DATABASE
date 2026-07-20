@@ -1,13 +1,14 @@
 [project]
 name = "mcp-database"
 version = "0.1.0"
-description = "MCP servers for MySQL and Oracle database connections"
+description = "MCP servers for MySQL, Oracle, and SQL Server database connections"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "mcp[cli]>=1.9.0",
     "mysql-connector-python>=9.0.0",
     "oracledb>=2.0.0",
+    "pyodbc>=5.0.0",
     "python-dotenv>=1.0.0",
 ]
 
@@ -21,10 +22,12 @@ mcp-mysql = "mcp_mysql.server:main"
 mcp-mysql-setup = "mcp_mysql.setup:main"
 mcp-oracle = "mcp_oracle.server:main"
 mcp-oracle-setup = "mcp_oracle.setup:main"
+mcp-sqlserver = "mcp_sqlserver.server:main"
+mcp-sqlserver-setup = "mcp_sqlserver.setup:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/mcp_mysql", "src/mcp_oracle"]
+packages = ["src/mcp_mysql", "src/mcp_oracle", "src/mcp_sqlserver"]
