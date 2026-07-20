@@ -93,9 +93,13 @@ Recarga los MCP del cliente y prueba con `test_connection`.
 
 | Cliente | Archivo por defecto |
 |---------|---------------------|
-| Cursor | `~/.cursor/mcp.json` (Windows) |
-| Claude Desktop | `%APPDATA%\Claude\claude_desktop_config.json` (Windows) |
-| Gemini | `C:\Users\User_Name\.gemini\config` (Windows) |
+| Cursor Windows| `\Users\username\.cursor`  |
+| Cursor Linux| `/home/user/.cursor/mcp.json`  |
+| Gemini Windows | `C:\users\user_name\.gemini\config\mcp_config.json`  |
+| Gemini Linux | `/home/username/.gemini/config/mcp_config.json`  |
+| Claude Windows | `./`  |
+| Claude Linux | `/home/user/.claude.json`  |
+
 
 ## Tools disponibles
 
