@@ -17,9 +17,10 @@ env/
 .env
 .env.local
 
-# IDE
+# IDE / local MCP client config
 .idea/
 .vscode/
+.cursor/
 *.swp
 *.swo
 
