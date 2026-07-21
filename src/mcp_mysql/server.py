@@ -5,7 +5,9 @@ from mcp.server.fastmcp import FastMCP
 from mcp_mysql import tools
 
 mcp = FastMCP(
+    # name of the MCP server
     "mcp-mysql",
+    # prompt for the MCP server
     instructions=(
         "MySQL database MCP server. Use the tools to inspect schema "
         "and run read-only SQL queries against the configured database."
@@ -13,18 +15,21 @@ mcp = FastMCP(
 )
 
 
+# tool to test the MySQL connection
 @mcp.tool()
 def test_connection() -> str:
     """Test the MySQL connection and return database name and version."""
     return tools.test_connection()
 
 
+# tool to list all tables in the configured MySQL database
 @mcp.tool()
 def list_tables() -> str:
     """List all tables in the configured MySQL database."""
     return tools.list_tables()
 
 
+# tool to describe the columns of a MySQL table
 @mcp.tool()
 def describe_table(table_name: str) -> str:
     """
@@ -36,6 +41,7 @@ def describe_table(table_name: str) -> str:
     return tools.describe_table(table_name)
 
 
+# tool to execute a read-only SQL query (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH)
 @mcp.tool()
 def execute_query(query: str, limit: int = 100) -> str:
     """
@@ -48,6 +54,7 @@ def execute_query(query: str, limit: int = 100) -> str:
     return tools.execute_query(query, limit)
 
 
+# main function to run the MCP server
 def main() -> None:
     mcp.run(transport="stdio")
 

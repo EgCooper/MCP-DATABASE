@@ -18,6 +18,7 @@ _FETCH_LIMIT_PATTERN = re.compile(
 )
 
 
+# tool to list all tables in the connected Oracle schema (USER_TABLES)
 def list_tables() -> str:
     """List tables visible to the connected Oracle user."""
     rows = db.fetch_all(
@@ -30,6 +31,7 @@ def list_tables() -> str:
     return json.dumps({"tables": tables, "count": len(tables)}, indent=2)
 
 
+# tool to describe the columns of an Oracle table in the current schema
 def describe_table(table_name: str) -> str:
     """Return column definitions for a table in the current schema."""
     if not re.fullmatch(r"[A-Za-z0-9_$#]+", table_name):
@@ -67,6 +69,7 @@ def describe_table(table_name: str) -> str:
     )
 
 
+# tool to execute a read-only SQL query (SELECT, WITH)
 def execute_query(query: str, limit: int = 100) -> str:
     """
     Execute a read-only SQL query and return results as JSON.
@@ -98,6 +101,7 @@ def execute_query(query: str, limit: int = 100) -> str:
         return json.dumps({"error": str(exc)})
 
 
+# tool to test the Oracle connection
 def test_connection() -> str:
     """Verify connectivity to Oracle."""
     try:

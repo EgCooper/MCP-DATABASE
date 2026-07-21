@@ -11,7 +11,7 @@ _READ_ONLY_PATTERN = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
-
+# tool to list all tables in the configured database
 def list_tables() -> str:
     """List all tables in the configured database."""
     rows = db.fetch_all("SHOW TABLES")
@@ -23,7 +23,7 @@ def list_tables() -> str:
     tables = [row[key] for row in rows]
     return json.dumps({"tables": tables, "count": len(tables)}, indent=2)
 
-
+# tool to describe the columns of a MySQL table
 def describe_table(table_name: str) -> str:
     """Return column definitions for a table."""
     if not re.fullmatch(r"[A-Za-z0-9_]+", table_name):
@@ -35,7 +35,7 @@ def describe_table(table_name: str) -> str:
 
     return json.dumps({"table": table_name, "columns": rows}, indent=2, default=str)
 
-
+# tool to execute a read-only SQL query (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH)
 def execute_query(query: str, limit: int = 100) -> str:
     """
     Execute a read-only SQL query and return results as JSON.
@@ -70,7 +70,7 @@ def execute_query(query: str, limit: int = 100) -> str:
     except Exception as exc:
         return json.dumps({"error": str(exc)})
 
-
+# tool to test the MySQL connection
 def test_connection() -> str:
     """Verify connectivity to MySQL."""
     try:

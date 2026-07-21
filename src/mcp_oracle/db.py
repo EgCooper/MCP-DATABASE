@@ -9,7 +9,7 @@ import oracledb
 
 from mcp_oracle.config import OracleConfig
 
-
+# function to get a new Oracle connection
 def get_connection(config: OracleConfig | None = None) -> oracledb.Connection:
     """Open a new Oracle connection (thin mode by default)."""
     cfg = config or OracleConfig.from_env()
@@ -17,14 +17,14 @@ def get_connection(config: OracleConfig | None = None) -> oracledb.Connection:
         raise ValueError("ORACLE_USER is required")
     return oracledb.connect(**cfg.as_connect_kwargs())
 
-
+# function to convert Oracle cursor to a list of dictionaries
 def _rows_as_dicts(cursor: oracledb.Cursor) -> list[dict[str, Any]]:
     if cursor.description is None:
         return []
     columns = [col[0].lower() for col in cursor.description]
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
-
+# function to yield a cursor and close the connection when done
 @contextmanager
 def db_cursor(
     config: OracleConfig | None = None,
@@ -42,14 +42,14 @@ def db_cursor(
         cursor.close()
         conn.close()
 
-
+# function to execute a query and return all rows as dictionaries
 def fetch_all(query: str, params: dict | tuple | None = None) -> list[dict[str, Any]]:
     """Execute a query and return all rows as dictionaries."""
     with db_cursor() as cursor:
         cursor.execute(query, params or {})
         return _rows_as_dicts(cursor)
 
-
+# function to execute a query and return a single row
 def fetch_one(query: str, params: dict | tuple | None = None) -> dict[str, Any] | None:
     """Execute a query and return a single row."""
     rows = fetch_all(query, params)

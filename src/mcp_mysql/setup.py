@@ -12,12 +12,12 @@ from typing import Any
 
 SERVER_NAME = "mysql"
 
-
+# function to return the project root
 def project_root() -> Path:
     """Return the repository root (parent of src/)."""
     return Path(__file__).resolve().parents[2]
 
-
+# function to resolve the Python interpreter
 def resolve_python(root: Path) -> Path:
     """Prefer the project virtualenv interpreter when present."""
     candidates = (
@@ -31,7 +31,7 @@ def resolve_python(root: Path) -> Path:
             return path
     return Path(sys.executable)
 
-
+# function to build the mysql MCP server entry
 def mysql_server_entry(root: Path, python: Path) -> dict[str, Any]:
     """Build the mysql MCP server entry (no credentials)."""
     return {
@@ -40,12 +40,12 @@ def mysql_server_entry(root: Path, python: Path) -> dict[str, Any]:
         "cwd": str(root),
     }
 
-
+# function to build a standalone mcpServers snippet
 def build_snippet(root: Path, python: Path) -> dict[str, Any]:
     """Build a standalone mcpServers snippet."""
     return {"mcpServers": {SERVER_NAME: mysql_server_entry(root, python)}}
 
-
+# function to return the default config file path
 def default_config_path(client: str) -> Path:
     """Resolve the default config file for a known MCP client."""
     home = Path.home()
@@ -68,7 +68,7 @@ def default_config_path(client: str) -> Path:
         return home / ".config" / "Claude" / "claude_desktop_config.json"
     raise SystemExit(f"Unsupported client: {client}")
 
-
+# function to load the config file
 def load_config(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {"mcpServers": {}}
@@ -85,7 +85,7 @@ def load_config(path: Path) -> dict[str, Any]:
         raise SystemExit(f'"mcpServers" must be an object in {path}')
     return data
 
-
+# function to merge the mysql MCP server entry into the config
 def merge_mysql(config: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]:
     """Insert/replace the mysql server without touching other servers."""
     merged = dict(config)
@@ -94,12 +94,12 @@ def merge_mysql(config: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]
     merged["mcpServers"] = servers
     return merged
 
-
+# function to write the config file
 def write_config(path: Path, config: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
-
+# function to collect warnings
 def _collect_warnings(root: Path) -> list[str]:
     warnings: list[str] = []
 
@@ -130,7 +130,7 @@ def _collect_warnings(root: Path) -> list[str]:
 
     return warnings
 
-
+# function to parse the arguments
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="python -m mcp_mysql setup",
@@ -163,7 +163,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     return parser.parse_args(argv)
 
-
+# function to main function to run the MCP server
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
     root = project_root()
