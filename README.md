@@ -125,22 +125,26 @@ Recarga los MCP del cliente y prueba con `test_connection`.
 
 ## Tools disponibles
 
-Las mismas tools en los cuatro servidores:
+Las mismas tools en los cuatro servidores (solo lectura):
 
 | Tool | Descripción |
 |------|-------------|
 | `test_connection` | Verifica la conexión |
 | `list_tables` | Lista tablas |
+| `list_views` | Lista vistas |
 | `describe_table` | Columnas de una tabla |
-| `execute_query` | Consultas de solo lectura |
+| `list_indexes` | Índices de una tabla |
+| `list_foreign_keys` | FKs de una tabla o de toda la DB |
+| `find_column` | Busca columnas por nombre (`%` wildcard) |
+| `sample_rows` | Muestra filas de ejemplo (máx. 100) |
+| `count_rows` | Cuenta filas de una tabla |
+| `execute_query` | SQL libre de solo lectura |
 
 **MySQL:** `SELECT`, `SHOW`, `DESCRIBE`, `EXPLAIN`, `WITH` (usa `LIMIT`).
 
-**Oracle:** `SELECT` / `WITH` (`FETCH FIRST n ROWS ONLY`).
+**Oracle / SQL Server / Informix:** `SELECT` / `WITH` (límites con `FETCH FIRST` / `TOP` / `FIRST`).
 
-**SQL Server:** `SELECT` / `WITH` (inyecta `TOP`).
-
-**Informix:** `SELECT` / `WITH` (inyecta `FIRST n`).
+`execute_query` rechaza múltiples sentencias (`;`) y keywords de escritura (`INSERT`, `UPDATE`, `DELETE`, `DROP`, etc.). En producción usa además un usuario DB read-only.
 
 ## Notas
 
