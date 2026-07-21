@@ -1,13 +1,14 @@
 # MCP Database
 
-Servidores MCP en Python para conectar asistentes de IA (Cursor, Claude, Gemini, etc.) a **MySQL**, **Oracle**, **SQL Server** e **Informix**.
+Servidores MCP en Python para conectar asistentes de IA (Cursor, Claude, Gemini, etc.) a **MySQL**, **Oracle**, **SQL Server**, **Informix** y **PostgreSQL**.
 
-Hay cuatro servidores independientes en el mismo repo:
+Hay cinco servidores independientes en el mismo repo:
 
 | Servidor | Módulo | Entrada MCP | Driver extra en la PC |
 |----------|--------|-------------|------------------------|
 | MySQL | `mcp_mysql` | `mysql` | No (pip alcanza) |
 | Oracle | `mcp_oracle` | `oracle` | No (pip / thin mode) |
+| PostgreSQL | `mcp_postgresql` | `postgresql` | No (pip / `psycopg`) |
 | SQL Server | `mcp_sqlserver` | `sqlserver` | **Sí** — ODBC Driver 17/18 |
 | Informix | `mcp_informix` | `informix` | **Sí** — Client SDK / ODBC IBM |
 
@@ -73,7 +74,7 @@ Activa el entorno virtual:
 source .venv/bin/activate
 ```
 
-Instala el paquete (incluye los cuatro servidores):
+Instala el paquete (incluye los cinco servidores):
 
 ```bash
 pip install -e .
@@ -98,6 +99,7 @@ Cada servidor se registra por separado (fusiona sin borrar otros MCPs):
 ```bash
 python -m mcp_mysql setup
 python -m mcp_oracle setup
+python -m mcp_postgresql setup
 python -m mcp_sqlserver setup
 python -m mcp_informix setup
 ```
@@ -105,12 +107,12 @@ python -m mcp_informix setup
 Opciones comunes:
 
 ```bash
-python -m mcp_informix setup --client claude
-python -m mcp_informix setup --dry-run
-python -m mcp_informix setup --print
+python -m mcp_postgresql setup --client claude
+python -m mcp_postgresql setup --dry-run
+python -m mcp_postgresql setup --print
 ```
 
-También: `mcp-mysql-setup` / `mcp-oracle-setup` / `mcp-sqlserver-setup` / `mcp-informix-setup`.
+También: `mcp-mysql-setup` / `mcp-oracle-setup` / `mcp-postgresql-setup` / `mcp-sqlserver-setup` / `mcp-informix-setup`.
 
 Recarga los MCP del cliente y prueba con `test_connection`.
 
@@ -125,7 +127,7 @@ Recarga los MCP del cliente y prueba con `test_connection`.
 
 ## Tools disponibles
 
-Las mismas tools en los cuatro servidores (solo lectura):
+Las mismas tools en los cinco servidores (solo lectura):
 
 | Tool | Descripción |
 |------|-------------|
@@ -140,7 +142,7 @@ Las mismas tools en los cuatro servidores (solo lectura):
 | `count_rows` | Cuenta filas de una tabla |
 | `execute_query` | SQL libre de solo lectura |
 
-**MySQL:** `SELECT`, `SHOW`, `DESCRIBE`, `EXPLAIN`, `WITH` (usa `LIMIT`).
+**MySQL / PostgreSQL:** `SELECT`, `SHOW`/`EXPLAIN` donde aplique, `WITH` (usa `LIMIT`).
 
 **Oracle / SQL Server / Informix:** `SELECT` / `WITH` (límites con `FETCH FIRST` / `TOP` / `FIRST`).
 
@@ -150,7 +152,7 @@ Las mismas tools en los cuatro servidores (solo lectura):
 
 - Los comandos `python -m mcp_*` arrancan el servidor stdio; lo lanza el cliente.
 - Las credenciales viven en `.env`, no en el JSON del cliente.
-- MySQL y Oracle no requieren instalador de driver aparte (en el flujo típico).
+- MySQL, Oracle y PostgreSQL no requieren instalador de driver aparte (en el flujo típico).
 - SQL Server e Informix **sí** requieren driver/SDK instalado en el sistema además de `pyodbc`.
 
 ## Estructura
@@ -162,6 +164,7 @@ MCP-DATABASE/
 ├── src/
 │   ├── mcp_mysql/
 │   ├── mcp_oracle/
+│   ├── mcp_postgresql/
 │   ├── mcp_sqlserver/
 │   └── mcp_informix/
 └── README.md

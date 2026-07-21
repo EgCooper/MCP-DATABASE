@@ -1,13 +1,14 @@
 [project]
 name = "mcp-database"
 version = "0.1.0"
-description = "MCP servers for MySQL, Oracle, SQL Server, and Informix"
+description = "MCP servers for MySQL, Oracle, SQL Server, Informix, and PostgreSQL"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "mcp[cli]>=1.9.0",
     "mysql-connector-python>=9.0.0",
     "oracledb>=2.0.0",
+    "psycopg[binary]>=3.1.0",
     "pyodbc>=5.0.0",
     "python-dotenv>=1.0.0",
 ]
@@ -26,6 +27,8 @@ mcp-sqlserver = "mcp_sqlserver.server:main"
 mcp-sqlserver-setup = "mcp_sqlserver.setup:main"
 mcp-informix = "mcp_informix.server:main"
 mcp-informix-setup = "mcp_informix.setup:main"
+mcp-postgresql = "mcp_postgresql.server:main"
+mcp-postgresql-setup = "mcp_postgresql.setup:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -37,4 +40,5 @@ packages = [
     "src/mcp_oracle",
     "src/mcp_sqlserver",
     "src/mcp_informix",
+    "src/mcp_postgresql",
 ]
