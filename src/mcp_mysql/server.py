@@ -7,9 +7,25 @@ from mcp_mysql import tools
 mcp = FastMCP(
     "mcp-mysql",
     instructions=(
-        "MySQL database MCP server. Use the tools to inspect schema "
-        "(tables, views, indexes, foreign keys) and run read-only SQL. "
-        "Never attempt writes: INSERT, UPDATE, DELETE, DROP, etc. are blocked."
+        "Read-only MySQL MCP for production-safe exploration.\n"
+        "\n"
+        "Rules:\n"
+        "- NEVER attempt writes (INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, "
+        "CREATE, GRANT, etc.). They are blocked and the DB user is read-only.\n"
+        "- Do not invent table or column names. Discover them with tools first.\n"
+        "- Prefer small result sets. Use limits; avoid SELECT * on huge tables.\n"
+        "- One statement only; no multi-statement SQL.\n"
+        "\n"
+        "Recommended workflow:\n"
+        "1) test_connection if unsure the server is reachable.\n"
+        "2) list_tables / list_views / find_column to locate objects.\n"
+        "3) describe_table, list_indexes, list_foreign_keys before joins.\n"
+        "4) sample_rows or count_rows for a quick look.\n"
+        "5) execute_query only for specific analytical SELECT/SHOW/DESCRIBE/"
+        "EXPLAIN/WITH queries.\n"
+        "\n"
+        "When answering, cite the objects and filters you used. "
+        "If a query fails, fix names/types from schema tools instead of guessing."
     ),
 )
 
