@@ -113,7 +113,7 @@ def _collect_warnings(root: Path) -> list[str]:
         text = (root / ".env").read_text(encoding="utf-8", errors="ignore")
         has_oracle = any(
             line.strip().startswith(
-                ("ORACLE_USER=", "ORACLE_DSN=", "ORACLE_SERVICE=")
+                ("ORACLE_USER=", "ORACLE_DSN=", "ORACLE_SID=")
             )
             for line in text.splitlines()
         )

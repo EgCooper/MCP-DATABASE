@@ -28,10 +28,10 @@ class OracleConfig:
         if not dsn:
             host = os.getenv("ORACLE_HOST", "localhost")
             port = os.getenv("ORACLE_PORT", "1521")
-            service = os.getenv("ORACLE_SERVICE", "")
+            service = os.getenv("ORACLE_SID", "")
             if not service:
                 raise ValueError(
-                    "Set ORACLE_DSN or ORACLE_HOST + ORACLE_PORT + ORACLE_SERVICE"
+                    "Set ORACLE_DSN or ORACLE_HOST + ORACLE_PORT + ORACLE_SID"
                 )
             dsn = f"{host}:{port}/{service}"
 
