@@ -1,4 +1,4 @@
-"""MCP tools for Oracle operations (read-only)."""
+"""MCP tools for Oracle operations (read-only, multi-connection)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import json
 import re
 
 from mcp_oracle import db
+from mcp_oracle import config as oracle_config
 
 _READ_ONLY_START = re.compile(
     r"^\s*(SELECT|WITH)\b",
@@ -32,6 +33,14 @@ def _err(message: str) -> str:
     return _ok({"error": message})
 
 
+def _resolve(connection: str) -> tuple[str | None, str | None]:
+    """Return (resolved_name, error_message)."""
+    try:
+        return oracle_config.resolve_connection_name(connection), None
+    except Exception as exc:
+        return None, str(exc)
+
+
 def _validate_table_name(table_name: str) -> str | None:
     if not _TABLE_NAME.fullmatch(table_name):
         return "Invalid table name. Use letters, numbers, underscore, $ or #."
@@ -51,8 +60,27 @@ def _validate_read_only_query(query: str) -> str | None:
     return None
 
 
-def test_connection() -> str:
-    """Verify connectivity to Oracle."""
+def list_connections() -> str:
+    """List configured Oracle connection profiles (no passwords)."""
+    try:
+        summaries = oracle_config.connection_summaries()
+        default = oracle_config.get_default_connection_name()
+        return _ok(
+            {
+                "connections": summaries,
+                "default": default,
+                "count": len(summaries),
+            }
+        )
+    except Exception as exc:
+        return _err(str(exc))
+
+
+def test_connection(connection: str = "") -> str:
+    """Verify connectivity to Oracle for a named profile (or default)."""
+    name, err = _resolve(connection)
+    if err:
+        return _err(err)
     try:
         row = db.fetch_one(
             """
@@ -62,38 +90,50 @@ def test_connection() -> str:
                 SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') AS current_schema,
                 SYS_CONTEXT('USERENV', 'DB_NAME') AS db_name
             FROM dual
-            """
+            """,
+            connection=name,
         )
-        return _ok({"status": "connected", **(row or {})})
+        return _ok({"status": "connected", "connection": name, **(row or {})})
     except Exception as exc:
-        return _ok({"status": "error", "error": str(exc)})
+        return _ok({"status": "error", "connection": name, "error": str(exc)})
 
 
-def list_tables() -> str:
+def list_tables(connection: str = "") -> str:
     """List tables visible to the connected Oracle user."""
-    rows = db.fetch_all(
-        "SELECT table_name FROM user_tables ORDER BY table_name"
-    )
-    if not rows:
-        return "No tables found."
-    tables = [row["table_name"] for row in rows]
-    return _ok({"tables": tables, "count": len(tables)})
-
-
-def list_views() -> str:
-    """List views in the current schema."""
-    rows = db.fetch_all(
-        "SELECT view_name FROM user_views ORDER BY view_name"
-    )
-    views = [row["view_name"] for row in rows]
-    return _ok({"views": views, "count": len(views)})
-
-
-def describe_table(table_name: str) -> str:
-    """Return column definitions for a table in the current schema."""
-    err = _validate_table_name(table_name)
+    name, err = _resolve(connection)
     if err:
         return _err(err)
+    rows = db.fetch_all(
+        "SELECT table_name FROM user_tables ORDER BY table_name",
+        connection=name,
+    )
+    if not rows:
+        return _ok({"connection": name, "tables": [], "count": 0})
+    tables = [row["table_name"] for row in rows]
+    return _ok({"connection": name, "tables": tables, "count": len(tables)})
+
+
+def list_views(connection: str = "") -> str:
+    """List views in the current schema."""
+    name, err = _resolve(connection)
+    if err:
+        return _err(err)
+    rows = db.fetch_all(
+        "SELECT view_name FROM user_views ORDER BY view_name",
+        connection=name,
+    )
+    views = [row["view_name"] for row in rows]
+    return _ok({"connection": name, "views": views, "count": len(views)})
+
+
+def describe_table(table_name: str, connection: str = "") -> str:
+    """Return column definitions for a table in the current schema."""
+    name, err = _resolve(connection)
+    if err:
+        return _err(err)
+    terr = _validate_table_name(table_name)
+    if terr:
+        return _err(terr)
 
     rows = db.fetch_all(
         """
@@ -110,17 +150,27 @@ def describe_table(table_name: str) -> str:
         ORDER BY column_id
         """,
         {"table_name": table_name.upper()},
+        connection=name,
     )
     if not rows:
         return _err(f"Table '{table_name}' not found or has no columns.")
-    return _ok({"table": table_name.upper(), "columns": rows})
+    return _ok(
+        {
+            "connection": name,
+            "table": table_name.upper(),
+            "columns": rows,
+        }
+    )
 
 
-def list_indexes(table_name: str) -> str:
+def list_indexes(table_name: str, connection: str = "") -> str:
     """List indexes for a table in the current schema."""
-    err = _validate_table_name(table_name)
+    name, err = _resolve(connection)
     if err:
         return _err(err)
+    terr = _validate_table_name(table_name)
+    if terr:
+        return _err(terr)
 
     rows = db.fetch_all(
         """
@@ -137,9 +187,11 @@ def list_indexes(table_name: str) -> str:
         ORDER BY i.index_name, c.column_position
         """,
         {"table_name": table_name.upper()},
+        connection=name,
     )
     return _ok(
         {
+            "connection": name,
             "table": table_name.upper(),
             "indexes": rows,
             "count": len(rows),
@@ -147,12 +199,16 @@ def list_indexes(table_name: str) -> str:
     )
 
 
-def list_foreign_keys(table_name: str = "") -> str:
+def list_foreign_keys(table_name: str = "", connection: str = "") -> str:
     """List foreign keys for one table, or all in the current schema."""
+    name, err = _resolve(connection)
+    if err:
+        return _err(err)
+
     if table_name:
-        err = _validate_table_name(table_name)
-        if err:
-            return _err(err)
+        terr = _validate_table_name(table_name)
+        if terr:
+            return _err(terr)
         rows = db.fetch_all(
             """
             SELECT
@@ -174,6 +230,7 @@ def list_foreign_keys(table_name: str = "") -> str:
             ORDER BY c.constraint_name, cc.position
             """,
             {"table_name": table_name.upper()},
+            connection=name,
         )
         display = table_name.upper()
     else:
@@ -195,16 +252,25 @@ def list_foreign_keys(table_name: str = "") -> str:
              AND cc.position = rc.position
             WHERE c.constraint_type = 'R'
             ORDER BY c.table_name, c.constraint_name, cc.position
-            """
+            """,
+            connection=name,
         )
         display = None
     return _ok(
-        {"table": display, "foreign_keys": rows, "count": len(rows)}
+        {
+            "connection": name,
+            "table": display,
+            "foreign_keys": rows,
+            "count": len(rows),
+        }
     )
 
 
-def find_column(column_name: str) -> str:
+def find_column(column_name: str, connection: str = "") -> str:
     """Find tables that contain a column (supports % wildcards)."""
+    name, err = _resolve(connection)
+    if err:
+        return _err(err)
     if not _COLUMN_PATTERN.fullmatch(column_name):
         return _err(
             "Invalid column pattern. Use letters, numbers, underscore, $, #, and %."
@@ -218,25 +284,38 @@ def find_column(column_name: str) -> str:
         ORDER BY table_name, column_id
         """,
         {"column_name": column_name},
+        connection=name,
     )
-    return _ok({"pattern": column_name, "matches": rows, "count": len(rows)})
+    return _ok(
+        {
+            "connection": name,
+            "pattern": column_name,
+            "matches": rows,
+            "count": len(rows),
+        }
+    )
 
 
-def sample_rows(table_name: str, limit: int = 10) -> str:
+def sample_rows(table_name: str, limit: int = 10, connection: str = "") -> str:
     """Return sample rows from a table (read-only)."""
-    err = _validate_table_name(table_name)
+    name, err = _resolve(connection)
     if err:
         return _err(err)
+    terr = _validate_table_name(table_name)
+    if terr:
+        return _err(terr)
     if limit < 1 or limit > 100:
         return _err("limit must be between 1 and 100.")
 
     try:
         rows = db.fetch_all(
             f'SELECT * FROM "{table_name.upper()}" '
-            f"FETCH FIRST {int(limit)} ROWS ONLY"
+            f"FETCH FIRST {int(limit)} ROWS ONLY",
+            connection=name,
         )
         return _ok(
             {
+                "connection": name,
                 "table": table_name.upper(),
                 "row_count": len(rows),
                 "rows": rows,
@@ -246,26 +325,35 @@ def sample_rows(table_name: str, limit: int = 10) -> str:
         return _err(str(exc))
 
 
-def count_rows(table_name: str) -> str:
+def count_rows(table_name: str, connection: str = "") -> str:
     """Count rows in a table."""
-    err = _validate_table_name(table_name)
+    name, err = _resolve(connection)
     if err:
         return _err(err)
+    terr = _validate_table_name(table_name)
+    if terr:
+        return _err(terr)
 
     try:
         row = db.fetch_one(
-            f'SELECT COUNT(*) AS row_count FROM "{table_name.upper()}"'
+            f'SELECT COUNT(*) AS row_count FROM "{table_name.upper()}"',
+            connection=name,
         )
-        return _ok({"table": table_name.upper(), **(row or {})})
+        return _ok(
+            {"connection": name, "table": table_name.upper(), **(row or {})}
+        )
     except Exception as exc:
         return _err(str(exc))
 
 
-def execute_query(query: str, limit: int = 100) -> str:
+def execute_query(query: str, limit: int = 100, connection: str = "") -> str:
     """Execute a read-only SQL query and return results as JSON."""
-    err = _validate_read_only_query(query)
+    name, err = _resolve(connection)
     if err:
         return _err(err)
+    qerr = _validate_read_only_query(query)
+    if qerr:
+        return _err(qerr)
     if limit < 1 or limit > 1000:
         return _err("limit must be between 1 and 1000.")
 
@@ -276,7 +364,9 @@ def execute_query(query: str, limit: int = 100) -> str:
         normalized = f"{normalized} FETCH FIRST {limit} ROWS ONLY"
 
     try:
-        rows = db.fetch_all(normalized)
-        return _ok({"row_count": len(rows), "rows": rows})
+        rows = db.fetch_all(normalized, connection=name)
+        return _ok(
+            {"connection": name, "row_count": len(rows), "rows": rows}
+        )
     except Exception as exc:
         return _err(str(exc))

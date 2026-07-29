@@ -116,13 +116,42 @@ También: `mcp-mysql-setup` / `mcp-oracle-setup` / `mcp-postgresql-setup` / `mcp
 
 Recarga los MCP del cliente y prueba con `test_connection`.
 
+### Oracle: varias conexiones (perfiles)
+
+Un solo MCP `oracle` puede apuntar a varias bases. En `.env`:
+
+```env
+Multi Connection
+
+ORACLE_CONNECTIONS=B1,B2
+ORACLE_DEFAULT=B1
+
+ORACLE_B1_USER=
+ORACLE_B1_PASSWORD=
+ORACLE_B1_HOST=
+ORACLE_B1_PORT=
+ORACLE_B1_SID=
+
+ORACLE_B2_USER=
+ORACLE_B2_PASSWORD=
+ORACLE_B2_HOST=
+ORACLE_B2_PORT=  
+ORACLE_B2_SID=
+
+```
+
+Uso en tools: `list_connections`, luego `list_tables(connection="qa")`, `execute_query(..., connection="qa")`, etc.  
+Si omites `connection`, se usa `ORACLE_DEFAULT`.
+
+El modo simple (una sola DB) sigue funcionando con `ORACLE_USER` / `ORACLE_DSN` sin `ORACLE_CONNECTIONS`.
+
 | Cliente | Archivo por defecto |
 |---------|---------------------|
 | Cursor Windows| `\Users\username\.cursor`  |
 | Cursor Linux| `/home/user/.cursor/mcp.json`  |
 | Gemini Windows | `C:\users\user_name\.gemini\config\mcp_config.json`  |
 | Gemini Linux | `/home/username/.gemini/config/mcp_config.json`  |
-| Claude Windows | `./`  |
+| Claude Windows | `C:\Users\Username\.claude.json`  |
 | Claude Linux | `/home/user/.claude.json`  |
 
 ## Tools disponibles
@@ -131,6 +160,7 @@ Las mismas tools en los cinco servidores (solo lectura):
 
 | Tool | Descripción |
 |------|-------------|
+| `list_connections` | Lista perfiles Oracle configurados (solo Oracle por ahora) |
 | `test_connection` | Verifica la conexión |
 | `list_tables` | Lista tablas |
 | `list_views` | Lista vistas |
