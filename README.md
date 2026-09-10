@@ -116,6 +116,34 @@ También: `mcp-mysql-setup` / `mcp-oracle-setup` / `mcp-postgresql-setup` / `mcp
 
 Recarga los MCP del cliente y prueba con `test_connection`.
 
+### Claude Code (CLI)
+
+El comando `setup` de este repo solo soporta `--client cursor` y `--client claude` (Claude **Desktop**). Si usas **Claude Code** (la CLI), regístralo con el comando nativo `claude mcp add`, ejecutado desde la raíz del repo:
+
+```bash
+claude mcp add mysql -- $(pwd)/.venv/bin/python -m mcp_mysql
+claude mcp add oracle -- $(pwd)/.venv/bin/python -m mcp_oracle
+claude mcp add postgresql -- $(pwd)/.venv/bin/python -m mcp_postgresql
+claude mcp add sqlserver -- $(pwd)/.venv/bin/python -m mcp_sqlserver
+claude mcp add informix -- $(pwd)/.venv/bin/python -m mcp_informix
+```
+
+Registra solo los motores que vayas a usar (necesitas las credenciales correspondientes ya cargadas en `.env`). En Windows, reemplaza `$(pwd)/.venv/bin/python` por la ruta a `.venv\Scripts\python.exe`.
+
+Verifica con:
+
+```bash
+claude mcp list
+```
+
+Y quita un servidor mal configurado con:
+
+```bash
+claude mcp remove <nombre>
+```
+
+Luego prueba con la tool `test_connection` dentro de una sesión de Claude Code.
+
 ### Oracle: varias conexiones (perfiles)
 
 Un solo MCP `oracle` puede apuntar a varias bases. En `.env`:
@@ -151,8 +179,10 @@ El modo simple (una sola DB) sigue funcionando con `ORACLE_USER` / `ORACLE_DSN` 
 | Cursor Linux| `/home/user/.cursor/mcp.json`  |
 | Gemini Windows | `C:\users\user_name\.gemini\config\mcp_config.json`  |
 | Gemini Linux | `/home/username/.gemini/config/mcp_config.json`  |
-| Claude Windows | `C:\Users\Username\.claude.json`  |
-| Claude Linux | `/home/user/.claude.json`  |
+| Claude Desktop Windows | `%APPDATA%\Claude\claude_desktop_config.json`  |
+| Claude Desktop macOS/Linux | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) / `~/.config/Claude/claude_desktop_config.json` (Linux)  |
+
+> **Claude Code (CLI):** no uses `--client claude` para esto — ese modo apunta a Claude Desktop, no a Claude Code. Usa `claude mcp add` como se explica en la sección [Claude Code (CLI)](#claude-code-cli) arriba.
 
 ## Tools disponibles
 
