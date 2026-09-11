@@ -120,6 +120,8 @@ Recarga los MCP del cliente y prueba con `test_connection`.
 
 El comando `setup` de este repo solo soporta `--client cursor` y `--client claude` (Claude **Desktop**). Si usas **Claude Code** (la CLI), regístralo con el comando nativo `claude mcp add`, ejecutado desde la raíz del repo:
 
+**Linux / macOS:**
+
 ```bash
 claude mcp add mysql -- $(pwd)/.venv/bin/python -m mcp_mysql
 claude mcp add oracle -- $(pwd)/.venv/bin/python -m mcp_oracle
@@ -128,7 +130,17 @@ claude mcp add sqlserver -- $(pwd)/.venv/bin/python -m mcp_sqlserver
 claude mcp add informix -- $(pwd)/.venv/bin/python -m mcp_informix
 ```
 
-Registra solo los motores que vayas a usar (necesitas las credenciales correspondientes ya cargadas en `.env`). En Windows, reemplaza `$(pwd)/.venv/bin/python` por la ruta a `.venv\Scripts\python.exe`.
+**Windows (PowerShell):**
+
+```powershell
+claude mcp add mysql -- "$PWD\.venv\Scripts\python.exe" -m mcp_mysql
+claude mcp add oracle -- "$PWD\.venv\Scripts\python.exe" -m mcp_oracle
+claude mcp add postgresql -- "$PWD\.venv\Scripts\python.exe" -m mcp_postgresql
+claude mcp add sqlserver -- "$PWD\.venv\Scripts\python.exe" -m mcp_sqlserver
+claude mcp add informix -- "$PWD\.venv\Scripts\python.exe" -m mcp_informix
+```
+
+Registra solo los motores que vayas a usar (necesitas las credenciales correspondientes ya cargadas en `.env`). Ejecuta los comandos desde la raíz del repo; si no, reemplaza `$(pwd)` / `$PWD` por la ruta absoluta al proyecto.
 
 Verifica con:
 
