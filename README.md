@@ -92,6 +92,30 @@ cp .env.example .env
 
 Edita `.env` con las bases que uses (ver `.env.example`).
 
+## Setup rápido (recomendado)
+
+Este repo incluye scripts que crean el `.venv`, instalan el paquete y copian `.env.example` → `.env` si no existe:
+
+**Linux / macOS:**
+```bash
+./setup_claude_code.sh
+```
+
+**Windows (PowerShell):**
+```powershell
+.\setup_claude_code.ps1
+```
+
+Si PowerShell bloquea el script por la execution policy, corre una vez (o pídeselo a tu admin):
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+Ninguno de los dos scripts toca `.env` con tus credenciales ni registra el MCP automáticamente — al terminar, imprimen el comando `claude mcp add` exacto (con la ruta al Python del `.venv` ya resuelta) para que:
+
+1. Edites `.env` a mano con las credenciales de las bases que vayas a usar.
+2. Corras ese `claude mcp add` por cada motor que quieras registrar (ver sección [Claude Code (CLI)](#claude-code-cli) abajo).
+
 ## Configurar el cliente MCP
 
 Cada servidor se registra por separado (fusiona sin borrar otros MCPs):
