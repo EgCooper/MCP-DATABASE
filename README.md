@@ -244,6 +244,18 @@ Las mismas tools en los cinco servidores (solo lectura):
 
 `execute_query` rechaza múltiples sentencias (`;`) y keywords de escritura (`INSERT`, `UPDATE`, `DELETE`, `DROP`, etc.). En producción usa además un usuario DB read-only.
 
+### Reportes fijos (solo MySQL)
+
+Para reportes que siempre deben ejecutar la misma query (y no una armada por el modelo), el servidor MySQL expone tools que leen el SQL desde `resources/querys/`:
+
+| Tool | Query | Parámetros |
+|------|-------|------------|
+| `report_hours` | `resources/querys/hours.sql` | `desde`, `hasta` en formato `YYYYMMDD` (ej. `20260101`, `20260826`) |
+
+- El SQL se lee del archivo en cada llamada: si editas `hours.sql`, el cambio aplica sin reiniciar el MCP.
+- `hours.sql` usa los marcadores `%(desde)s` y `%(hasta)s`; no se puede pegar tal cual en otro cliente SQL. Para eso está `hours.original.sql` (con fechas fijas).
+- Estos reportes no pasan por el validador de `execute_query` (la query usa la función `REPLACE()`) ni se recortan con `LIMIT`.
+
 ## Notas
 
 - Los comandos `python -m mcp_*` arrancan el servidor stdio; lo lanza el cliente.
@@ -263,6 +275,8 @@ MCP-DATABASE/
 │   ├── mcp_postgresql/
 │   ├── mcp_sqlserver/
 │   └── mcp_informix/
+├── resources/
+│   └── querys/          # SQL de reportes fijos (ej. hours.sql)
 └── README.md
 ```
 

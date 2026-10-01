@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 from mcp_mysql import db
+
+_QUERIES_DIR = Path(__file__).resolve().parents[2] / "resources" / "querys"
 
 _READ_ONLY_START = re.compile(
     r"^\s*(SELECT|SHOW|DESCRIBE|DESC|EXPLAIN|WITH)\b",
@@ -18,6 +21,7 @@ _FORBIDDEN_SQL = re.compile(
 )
 _TABLE_NAME = re.compile(r"^[A-Za-z0-9_]+$")
 _COLUMN_PATTERN = re.compile(r"^[A-Za-z0-9_%]+$")
+_DATE_YYYYMMDD = re.compile(r"^\d{8}$")
 
 
 def _ok(payload: dict) -> str:
@@ -225,5 +229,35 @@ def execute_query(query: str, limit: int = 100) -> str:
     try:
         rows = db.fetch_all(normalized)
         return _ok({"row_count": len(rows), "rows": rows})
+    except Exception as exc:
+        return _err(str(exc))
+
+
+def report_hours(desde: str, hasta: str) -> str:
+    """
+    Run the fixed hours report from resources/querys/hours.sql.
+
+    The SQL file is trusted repo content, so it skips the read-only validator
+    (it uses the REPLACE() function) and is not truncated with LIMIT.
+    """
+    for name, value in (("desde", desde), ("hasta", hasta)):
+        if not _DATE_YYYYMMDD.fullmatch(value):
+            return _err(f"{name} must be a date in YYYYMMDD format, e.g. 20260101.")
+    if desde > hasta:
+        return _err("desde must be less than or equal to hasta.")
+
+    try:
+        sql = (_QUERIES_DIR / "hours.sql").read_text(encoding="utf-8")
+        sql = sql.strip().rstrip(";")
+        rows = db.fetch_all(sql, {"desde": desde, "hasta": hasta})
+        return _ok(
+            {
+                "report": "hours",
+                "desde": desde,
+                "hasta": hasta,
+                "row_count": len(rows),
+                "rows": rows,
+            }
+        )
     except Exception as exc:
         return _err(str(exc))

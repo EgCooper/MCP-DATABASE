@@ -15,6 +15,9 @@ mcp = FastMCP(
         "- Do not invent table or column names. Discover them with tools first.\n"
         "- Prefer small result sets. Use limits; avoid SELECT * on huge tables.\n"
         "- One statement only; no multi-statement SQL.\n"
+        "- For support-ticket hours reports (horas, tiempos, horas extra, horas "
+        "compensadas, agentes de apoyo), ALWAYS call report_hours. Never write "
+        "your own query or use execute_query for that report.\n"
         "\n"
         "Recommended workflow:\n"
         "1) test_connection if unsure the server is reachable.\n"
@@ -125,6 +128,23 @@ def execute_query(query: str, limit: int = 100) -> str:
         limit: Max rows when the query has no LIMIT (1-1000).
     """
     return tools.execute_query(query, limit)
+
+
+@mcp.tool()
+def report_hours(desde: str, hasta: str) -> str:
+    """
+    Official support-ticket hours report (osTicket).
+
+    ALWAYS use this tool when asked for ticket hours, times, overtime,
+    compensated hours or support agents. It runs a fixed, validated query
+    from resources/querys/hours.sql. Do NOT build your own query and do NOT
+    use execute_query for this report.
+
+    Args:
+        desde: Start date (ticket creation), format YYYYMMDD, e.g. 20260101.
+        hasta: End date (inclusive), format YYYYMMDD, e.g. 20260826.
+    """
+    return tools.report_hours(desde, hasta)
 
 
 def main() -> None:

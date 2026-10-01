@@ -69,6 +69,6 @@ LEFT JOIN ost_help_topic ht ON t.topic_id = ht.topic_id
 LEFT JOIN ost_thread ot ON ot.object_id = t.ticket_id AND ot.object_type = 'T'
 WHERE t.ticket_pid IS NULL
   AND s.name NOT IN ('Descartado')
-  AND DATE(t.created) BETWEEN STR_TO_DATE('20260101','%Y%m%d') 
-                           AND STR_TO_DATE('20260826','%Y%m%d')
+  AND DATE(t.created) BETWEEN STR_TO_DATE(%(desde)s,'%Y%m%d')
+                           AND STR_TO_DATE(%(hasta)s,'%Y%m%d')
 ORDER BY c.fechaInicio DESC;
