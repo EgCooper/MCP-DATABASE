@@ -14,7 +14,7 @@ Hay cinco servidores independientes en el mismo repo:
 
 ## Requisitos
 
-- Python 3.11+
+- Python 3.11+ (los scripts de [Setup rápido](#setup-rápido-recomendado) lo instalan solos si falta)
 - Acceso a la(s) base(s) que vayas a usar
 - **SQL Server e Informix:** además de `pip install -e .`, debes instalar el driver nativo en cada máquina (ver sección abajo)
 
@@ -94,22 +94,26 @@ Edita `.env` con las bases que uses (ver `.env.example`).
 
 ## Setup rápido (recomendado)
 
-Este repo incluye scripts en `resources/Scripts/` que crean el `.venv` en la raíz del repo, instalan el paquete y copian `.env.example` → `.env` si no existe. Puedes ejecutarlos desde cualquier carpeta; siempre trabajan sobre la raíz del repo.
+Este repo incluye scripts en `resources/Scripts/` que dejan todo listo sin necesitar Python instalado ni permisos de administrador:
+
+1. Instalan [uv](https://docs.astral.sh/uv/) 0.12.24 en `~/.local/bin` si no está.
+2. Con uv, instalan Python 3.13 en tu carpeta de usuario (no toca el Python del sistema).
+3. Crean el `.venv` en la raíz del repo e instalan el paquete. Si encuentran un `.venv` creado con una versión anterior del script, lo recrean con el Python de uv.
+4. Copian `.env.example` → `.env` si no existe.
+
+Puedes ejecutarlos desde cualquier carpeta; siempre trabajan sobre la raíz del repo. Necesitan acceso a internet (astral.sh y github.com) la primera vez.
 
 **Linux / macOS:**
 ```bash
 ./resources/Scripts/setup_claude_code.sh
 ```
 
-**Windows (PowerShell):**
+**Windows:** doble clic en `resources\Scripts\setup_claude_code.cmd`, o desde una terminal:
 ```powershell
-.\resources\Scripts\setup_claude_code.ps1
+.\resources\Scripts\setup_claude_code.cmd
 ```
 
-Si PowerShell bloquea el script por la execution policy, corre una vez (o pídeselo a tu admin):
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-```
+El `.cmd` ejecuta el `.ps1` con `-ExecutionPolicy Bypass` solo para esa ejecución, así que no hace falta cambiar la execution policy de la máquina. Si tu empresa fija la política por GPO (directiva de grupo), esa directiva tiene prioridad y el script no correrá: en ese caso pide a TI que lo habilite o usa la [instalación manual](#instalación-del-proyecto).
 
 Ninguno de los dos scripts toca `.env` con tus credenciales ni registra el MCP automáticamente — al terminar, imprimen el comando `claude mcp add` exacto (con la ruta al Python del `.venv` ya resuelta) para que:
 
@@ -277,7 +281,7 @@ MCP-DATABASE/
 │   └── mcp_informix/
 ├── resources/
 │   ├── querys/          # SQL de reportes fijos (ej. hours.sql)
-│   └── Scripts/         # setup_claude_code.sh / setup_claude_code.ps1
+│   └── Scripts/         # setup_claude_code.sh / .ps1 / .cmd
 └── README.md
 ```
 

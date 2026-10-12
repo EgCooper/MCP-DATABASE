@@ -1,0 +1,3 @@
+# Batch files misbehave with LF endings; shell scripts break with CRLF.
+*.cmd text eol=crlf
+*.sh text eol=lf
