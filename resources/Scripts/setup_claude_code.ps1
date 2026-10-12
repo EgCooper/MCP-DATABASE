@@ -1,9 +1,11 @@
 $ErrorActionPreference = "Stop"
 
+# The script lives in resources/Scripts; everything runs from the repo root.
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-Set-Location $ScriptDir
+$RootDir = (Resolve-Path (Join-Path $ScriptDir "..\..")).Path
+Set-Location $RootDir
 
-$PythonBin = Join-Path $ScriptDir ".venv\Scripts\python.exe"
+$PythonBin = Join-Path $RootDir ".venv\Scripts\python.exe"
 
 if (-not (Test-Path $PythonBin)) {
     Write-Host "==> Creando entorno virtual (.venv)..."
@@ -11,13 +13,13 @@ if (-not (Test-Path $PythonBin)) {
 }
 
 Write-Host "==> Instalando dependencias..."
-& (Join-Path $ScriptDir ".venv\Scripts\pip.exe") install --upgrade pip | Out-Null
-& (Join-Path $ScriptDir ".venv\Scripts\pip.exe") install -e . | Out-Null
+& $PythonBin -m pip install --upgrade pip | Out-Null
+& $PythonBin -m pip install -e . | Out-Null
 
-$EnvFile = Join-Path $ScriptDir ".env"
+$EnvFile = Join-Path $RootDir ".env"
 if (-not (Test-Path $EnvFile)) {
     Write-Host "==> No existe .env. Copiando .env.example -> .env"
-    Copy-Item (Join-Path $ScriptDir ".env.example") $EnvFile
+    Copy-Item (Join-Path $RootDir ".env.example") $EnvFile
 }
 
 Write-Host ""

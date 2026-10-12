@@ -94,16 +94,16 @@ Edita `.env` con las bases que uses (ver `.env.example`).
 
 ## Setup rápido (recomendado)
 
-Este repo incluye scripts que crean el `.venv`, instalan el paquete y copian `.env.example` → `.env` si no existe:
+Este repo incluye scripts en `resources/Scripts/` que crean el `.venv` en la raíz del repo, instalan el paquete y copian `.env.example` → `.env` si no existe. Puedes ejecutarlos desde cualquier carpeta; siempre trabajan sobre la raíz del repo.
 
 **Linux / macOS:**
 ```bash
-./setup_claude_code.sh
+./resources/Scripts/setup_claude_code.sh
 ```
 
 **Windows (PowerShell):**
 ```powershell
-.\setup_claude_code.ps1
+.\resources\Scripts\setup_claude_code.ps1
 ```
 
 Si PowerShell bloquea el script por la execution policy, corre una vez (o pídeselo a tu admin):
@@ -276,7 +276,8 @@ MCP-DATABASE/
 │   ├── mcp_sqlserver/
 │   └── mcp_informix/
 ├── resources/
-│   └── querys/          # SQL de reportes fijos (ej. hours.sql)
+│   ├── querys/          # SQL de reportes fijos (ej. hours.sql)
+│   └── Scripts/         # setup_claude_code.sh / setup_claude_code.ps1
 └── README.md
 ```
 
