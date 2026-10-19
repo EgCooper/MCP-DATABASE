@@ -96,12 +96,18 @@ Edita `.env` con las bases que uses (ver `.env.example`).
 
 Este repo incluye scripts en `resources/Scripts/` que dejan todo listo sin necesitar Python instalado ni permisos de administrador:
 
-1. Instalan [uv](https://docs.astral.sh/uv/) 0.12.24 en `~/.local/bin` si no está.
-2. Con uv, instalan Python 3.13 en tu carpeta de usuario (no toca el Python del sistema).
-3. Crean el `.venv` en la raíz del repo e instalan el paquete. Si encuentran un `.venv` creado con una versión anterior del script, lo recrean con el Python de uv.
-4. Copian `.env.example` → `.env` si no existe.
+1. Preguntan qué motores vas a usar. Con Enter aceptas la sugerencia: los motores que ya tengas configurados en `.env`, o `mysql` la primera vez.
+2. Instalan [uv](https://docs.astral.sh/uv/) 0.12.24 en `~/.local/bin` si no está.
+3. Instalan Python 3.13 en tu carpeta de usuario, sin tocar el Python del sistema:
+   - **Linux / macOS:** el Python que descarga uv.
+   - **Windows:** el instalador oficial de python.org (3.13.16), en `%LOCALAPPDATA%\Programs\Python\Python313`. El script verifica que esté firmado por la Python Software Foundation antes de ejecutarlo. No se usa el Python de uv porque no está firmado y [Smart App Control](#windows-smart-app-control) lo bloquea.
+4. Crean el `.venv` en la raíz del repo e instalan el paquete. Si encuentran un `.venv` creado con otro Python (por una versión anterior del script), lo recrean.
+5. Verifican que Python pueda cargar los MCP, para que un problema aparezca aquí y no como "Connection closed" dentro de Claude Code.
+6. Copian `.env.example` → `.env` si no existe.
+7. Piden los datos de conexión de cada motor elegido (host, puerto, base, usuario, contraseña, etc.), los guardan en `.env` y prueban la conexión en el momento. Si falla, muestran el error y ofrecen corregir los datos. La contraseña no se ve al escribirla, y en Linux/macOS el `.env` queda legible solo por tu usuario. Si un motor ya está configurado, solo preguntan si quieres cambiarlo. Oracle admite varias bases (perfiles, ver [Oracle: varias conexiones](#oracle-varias-conexiones-perfiles)).
+8. Registran en Claude Code cada motor elegido, disponible en todas tus carpetas (`claude mcp add --scope user`), y comprueban que arranque. Si ya estaba registrado, lo reemplazan; por eso, si mueves el repo de carpeta, basta con volver a ejecutar el script. Si no encuentran Claude Code, imprimen los comandos para registrarlos a mano.
 
-Puedes ejecutarlos desde cualquier carpeta; siempre trabajan sobre la raíz del repo. Necesitan acceso a internet (astral.sh y github.com) la primera vez.
+Puedes ejecutarlos desde cualquier carpeta; siempre trabajan sobre la raíz del repo. Necesitan acceso a internet (astral.sh, github.com y, en Windows, python.org) la primera vez.
 
 **Linux / macOS:**
 ```bash
@@ -113,12 +119,28 @@ Puedes ejecutarlos desde cualquier carpeta; siempre trabajan sobre la raíz del 
 .\resources\Scripts\setup_claude_code.cmd
 ```
 
+Para no elegir los motores en el menú, pásalos como argumento (nombres o números, `todos` o `ninguno`):
+
+```bash
+./resources/Scripts/setup_claude_code.sh mysql oracle
+.\resources\Scripts\setup_claude_code.cmd mysql
+```
+
+Al terminar, solo falta abrir Claude Code (o reiniciarlo, si ya estaba abierto) y pedir *"prueba la conexión a mysql"*. Para cambiar credenciales más adelante, vuelve a ejecutar el script: con Enter mantienes los datos actuales.
+
+Si el script corre sin terminal interactiva (por ejemplo, desde otra herramienta), no pide credenciales: completa `.env` a mano, quitando el `#` de cada línea.
+
 El `.cmd` ejecuta el `.ps1` con `-ExecutionPolicy Bypass` solo para esa ejecución, así que no hace falta cambiar la execution policy de la máquina. Si tu empresa fija la política por GPO (directiva de grupo), esa directiva tiene prioridad y el script no correrá: en ese caso pide a TI que lo habilite o usa la [instalación manual](#instalación-del-proyecto).
 
-Ninguno de los dos scripts toca `.env` con tus credenciales ni registra el MCP automáticamente — al terminar, imprimen el comando `claude mcp add` exacto (con la ruta al Python del `.venv` ya resuelta) para que:
+#### Windows: Smart App Control
 
-1. Edites `.env` a mano con las credenciales de las bases que vayas a usar.
-2. Corras ese `claude mcp add` por cada motor que quieras registrar (ver sección [Claude Code (CLI)](#claude-code-cli) abajo).
+En equipos con Windows 11 que tienen Smart App Control activo, Windows puede bloquear archivos de Python sin firma. El error se ve así:
+
+```
+ImportError: DLL load failed while importing unicodedata: Una directiva de Control de aplicaciones bloqueó este archivo.
+```
+
+El script evita el caso más común usando el Python oficial (firmado). Algunos paquetes instalados con pip traen archivos `.pyd` sin firma que Smart App Control también puede bloquear; si pasa, el script se detiene y lo indica. La única solución en ese caso es desactivarlo en *Seguridad de Windows → Control de aplicaciones y navegador → Configuración de Smart App Control*, y volver a ejecutar el script. El script no lo desactiva solo: es una protección de todo el equipo, requiere ser administrador y, según la versión de Windows 11, puede no volver a activarse sin reinstalar Windows. En equipos de la empresa, consúltalo con TI.
 
 ## Configurar el cliente MCP
 
@@ -146,29 +168,31 @@ Recarga los MCP del cliente y prueba con `test_connection`.
 
 ### Claude Code (CLI)
 
-El comando `setup` de este repo solo soporta `--client cursor` y `--client claude` (Claude **Desktop**). Si usas **Claude Code** (la CLI), regístralo con el comando nativo `claude mcp add`, ejecutado desde la raíz del repo:
+Los scripts de [Setup rápido](#setup-rápido-recomendado) ya registran los MCP en Claude Code. Para hacerlo a mano, usa el comando nativo `claude mcp add` (el comando `setup` de este repo solo soporta `--client cursor` y `--client claude`, que es Claude **Desktop**).
+
+Ejecuta estos comandos en una terminal normal, no dentro de una sesión de Claude, y desde la raíz del repo (si no, reemplaza `$(pwd)` / `$PWD` por la ruta absoluta al proyecto). `--scope user` deja el MCP disponible en todas tus carpetas; sin esa opción, Claude Code lo registra solo para la carpeta donde ejecutaste el comando.
 
 **Linux / macOS:**
 
 ```bash
-claude mcp add mysql -- $(pwd)/.venv/bin/python -m mcp_mysql
-claude mcp add oracle -- $(pwd)/.venv/bin/python -m mcp_oracle
-claude mcp add postgresql -- $(pwd)/.venv/bin/python -m mcp_postgresql
-claude mcp add sqlserver -- $(pwd)/.venv/bin/python -m mcp_sqlserver
-claude mcp add informix -- $(pwd)/.venv/bin/python -m mcp_informix
+claude mcp add --scope user mysql -- "$(pwd)/.venv/bin/python" -m mcp_mysql
+claude mcp add --scope user oracle -- "$(pwd)/.venv/bin/python" -m mcp_oracle
+claude mcp add --scope user postgresql -- "$(pwd)/.venv/bin/python" -m mcp_postgresql
+claude mcp add --scope user sqlserver -- "$(pwd)/.venv/bin/python" -m mcp_sqlserver
+claude mcp add --scope user informix -- "$(pwd)/.venv/bin/python" -m mcp_informix
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-claude mcp add mysql -- "$PWD\.venv\Scripts\python.exe" -m mcp_mysql
-claude mcp add oracle -- "$PWD\.venv\Scripts\python.exe" -m mcp_oracle
-claude mcp add postgresql -- "$PWD\.venv\Scripts\python.exe" -m mcp_postgresql
-claude mcp add sqlserver -- "$PWD\.venv\Scripts\python.exe" -m mcp_sqlserver
-claude mcp add informix -- "$PWD\.venv\Scripts\python.exe" -m mcp_informix
+claude mcp add --scope user mysql -- "$PWD\.venv\Scripts\python.exe" -m mcp_mysql
+claude mcp add --scope user oracle -- "$PWD\.venv\Scripts\python.exe" -m mcp_oracle
+claude mcp add --scope user postgresql -- "$PWD\.venv\Scripts\python.exe" -m mcp_postgresql
+claude mcp add --scope user sqlserver -- "$PWD\.venv\Scripts\python.exe" -m mcp_sqlserver
+claude mcp add --scope user informix -- "$PWD\.venv\Scripts\python.exe" -m mcp_informix
 ```
 
-Registra solo los motores que vayas a usar (necesitas las credenciales correspondientes ya cargadas en `.env`). Ejecuta los comandos desde la raíz del repo; si no, reemplaza `$(pwd)` / `$PWD` por la ruta absoluta al proyecto.
+Registra solo los motores que vayas a usar. Puedes registrarlos antes de completar `.env`: el MCP lee las credenciales al arrancar, así que si cambias `.env` después, reinicia Claude Code.
 
 Verifica con:
 
@@ -179,7 +203,7 @@ claude mcp list
 Y quita un servidor mal configurado con:
 
 ```bash
-claude mcp remove <nombre>
+claude mcp remove --scope user <nombre>
 ```
 
 Luego prueba con la tool `test_connection` dentro de una sesión de Claude Code.
@@ -281,7 +305,7 @@ MCP-DATABASE/
 │   └── mcp_informix/
 ├── resources/
 │   ├── querys/          # SQL de reportes fijos (ej. hours.sql)
-│   └── Scripts/         # setup_claude_code.sh / .ps1 / .cmd
+│   └── Scripts/         # setup_claude_code.sh / .ps1 / .cmd y configure_env.py (credenciales)
 └── README.md
 ```
 

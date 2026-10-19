@@ -7,10 +7,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
+from psycopg.conninfo import make_conninfo
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-load_dotenv(_PROJECT_ROOT / ".env")
-load_dotenv()
+# No ${VAR} expansion: a password may contain "${".
+load_dotenv(_PROJECT_ROOT / ".env", interpolate=False)
+load_dotenv(interpolate=False)
 
 
 @dataclass(frozen=True)
@@ -39,13 +41,14 @@ class PostgreSQLConfig:
         if not database:
             raise ValueError("POSTGRES_DATABASE is required (or set POSTGRES_DSN)")
 
-        parts = [
-            f"host={host}",
-            f"port={port}",
-            f"user={user}",
-            f"password={password}",
-            f"dbname={database}",
-        ]
+        params = {
+            "host": host,
+            "port": port,
+            "user": user,
+            "password": password,
+            "dbname": database,
+        }
         if sslmode:
-            parts.append(f"sslmode={sslmode}")
-        return cls(conninfo=" ".join(parts))
+            params["sslmode"] = sslmode
+        # make_conninfo quotes the values, so passwords with spaces or quotes work.
+        return cls(conninfo=make_conninfo(**params))

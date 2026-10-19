@@ -10,8 +10,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-load_dotenv(_PROJECT_ROOT / ".env")
-load_dotenv()
+# No ${VAR} expansion: a password may contain "${".
+load_dotenv(_PROJECT_ROOT / ".env", interpolate=False)
+load_dotenv(interpolate=False)
 
 _NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 LEGACY_NAME = "default"
