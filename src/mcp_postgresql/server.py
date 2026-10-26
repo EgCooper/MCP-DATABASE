@@ -1,6 +1,9 @@
 """MCP PostgreSQL server entrypoint."""
 
+import argparse
+
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from mcp_postgresql import tools
 
@@ -129,7 +132,30 @@ def execute_query(query: str, limit: int = 100) -> str:
 
 
 def main() -> None:
-    mcp.run(transport="stdio")
+    parser = argparse.ArgumentParser(prog="mcp-postgresql")
+    parser.add_argument(
+        "--transport", choices=["stdio", "streamable-http"], default="stdio"
+    )
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument(
+        "--allowed-host",
+        action="append",
+        default=[],
+        help="Extra Host header accepted over HTTP, e.g. host.docker.internal:*",
+    )
+    args = parser.parse_args()
+
+    if args.transport == "streamable-http":
+        mcp.settings.host = args.host
+        mcp.settings.port = args.port
+        # DNS rebinding protection: only localhost and --allowed-host values.
+        mcp.settings.transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", *args.allowed_host],
+        )
+
+    mcp.run(transport=args.transport)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,8 @@
 
 Usage:
   python -m mcp_sqlserver                 # start MCP server (stdio)
+  python -m mcp_sqlserver --transport streamable-http --port 8001
+                                    # serve over HTTP at /mcp
   python -m mcp_sqlserver setup           # install sqlserver into ~/.cursor/mcp.json
   python -m mcp_sqlserver setup --print   # only print the JSON snippet
 """

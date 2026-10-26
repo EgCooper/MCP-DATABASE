@@ -2,6 +2,8 @@
 
 Usage:
   python -m mcp_informix                 # start MCP server (stdio)
+  python -m mcp_informix --transport streamable-http --port 8001
+                                    # serve over HTTP at /mcp
   python -m mcp_informix setup           # install informix into ~/.cursor/mcp.json
   python -m mcp_informix setup --print   # only print the JSON snippet
 """

@@ -2,6 +2,8 @@
 
 Usage:
   python -m mcp_postgresql                 # start MCP server (stdio)
+  python -m mcp_postgresql --transport streamable-http --port 8001
+                                    # serve over HTTP at /mcp
   python -m mcp_postgresql setup           # install postgresql into ~/.cursor/mcp.json
   python -m mcp_postgresql setup --print   # only print the JSON snippet
 """

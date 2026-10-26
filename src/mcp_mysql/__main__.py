@@ -2,6 +2,8 @@
 
 Usage:
   python -m mcp_mysql                 # start MCP server (stdio)
+  python -m mcp_mysql --transport streamable-http --port 8001
+                                    # serve over HTTP at /mcp
   python -m mcp_mysql setup           # install mysql into ~/.cursor/mcp.json
   python -m mcp_mysql setup --print   # only print the JSON snippet
 """

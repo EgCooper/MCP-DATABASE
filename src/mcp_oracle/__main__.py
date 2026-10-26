@@ -2,6 +2,8 @@
 
 Usage:
   python -m mcp_oracle                 # start MCP server (stdio)
+  python -m mcp_oracle --transport streamable-http --port 8001
+                                    # serve over HTTP at /mcp
   python -m mcp_oracle setup           # install oracle into ~/.cursor/mcp.json
   python -m mcp_oracle setup --print   # only print the JSON snippet
 """
