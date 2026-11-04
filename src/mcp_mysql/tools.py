@@ -1,3 +1,4 @@
+#  Implement tools for MySQL operations (read-only) in the MCP server.
 """MCP tools for MySQL operations (read-only)."""
 
 from __future__ import annotations

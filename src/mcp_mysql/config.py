@@ -1,3 +1,4 @@
+# read all MySQL connection settings from environment variables, with defaults
 """MySQL connection settings loaded from environment variables."""
 
 import os

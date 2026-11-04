@@ -1,3 +1,4 @@
+# configure local clients for the mysql MCP server
 """Install / print MCP client config for this installation."""
 
 from __future__ import annotations

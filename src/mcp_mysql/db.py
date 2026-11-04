@@ -1,3 +1,4 @@
+# Open connection to mysql and run queries
 """MySQL connection helpers."""
 
 from contextlib import contextmanager

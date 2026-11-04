@@ -1,3 +1,4 @@
+# expose tools from mcp_mysql.tools
 """MCP MySQL server entrypoint."""
 
 import argparse
@@ -153,7 +154,8 @@ def report_hours(desde: str, hasta: str) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="mcp-mysql")
     parser.add_argument(
-        "--transport", choices=["stdio", "streamable-http"], default="stdio"
+        "--transport", choices=["stdio", "streamable-http"], default="streamable-http",
+        help="Transport to use (default: streamable-http)."
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
