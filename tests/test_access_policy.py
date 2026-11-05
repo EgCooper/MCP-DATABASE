@@ -8,6 +8,7 @@ import pytest
 
 from mcp_mysql import db, tools
 from mcp_mysql.access import ALLOWED_TABLE_COLUMNS
+from mcp_mysql.responses import MAX_FIELD_CHARACTERS
 from mcp_mysql.server import mcp
 
 
@@ -28,7 +29,7 @@ def fetch(monkeypatch):
 
 def column(name):
     return {
-        "Field": name, "Type": "varchar(128)", "Null": "YES",
+        "Field": name, "Type": "int" if name.endswith("_id") else "varchar(128)", "Null": "YES",
         "Key": "", "Default": None, "Extra": "",
     }
 
@@ -87,7 +88,7 @@ def test_staff_description_excludes_secret_and_new_columns(fetch):
     assert "TABLE_SCHEMA = DATABASE()" in query
     assert "TABLE_NAME = %s" in query
     assert "COLUMN_NAME IN (" in query
-    assert parameters[0] == "ost_staff"
+    assert parameters[2] == "ost_staff"
     assert query.count("%s") == len(parameters)
     assert not {"passwd", "permissions", "extra", "future_auth_token"} & set(parameters)
 
@@ -103,8 +104,8 @@ def test_staff_sample_selects_only_permitted_existing_columns(fetch):
         "rows": [{"staff_id": 1, "firstname": "Agent"}],
     }
     query, parameters = fetch.call_args.args
-    assert query == "SELECT `staff_id`, `firstname` FROM `ost_staff` LIMIT %s"
-    assert parameters == (5,)
+    assert query == "SELECT `staff_id`, LEFT(`firstname`, %s) AS `firstname` FROM `ost_staff` LIMIT %s"
+    assert parameters == (MAX_FIELD_CHARACTERS + 1, 5)
 
 
 def test_custom_hours_and_company_survive_partial_schema(fetch):
@@ -117,7 +118,7 @@ def test_custom_hours_and_company_survive_partial_schema(fetch):
     query, parameters = fetch.call_args.args
     assert "`listaEmpresa`" in query and "`timeExtra`" in query
     assert "new_private_field" not in query and "timeApoyo3" not in query
-    assert parameters == (10,)
+    assert parameters == (MAX_FIELD_CHARACTERS + 1, MAX_FIELD_CHARACTERS + 1, 10)
 
 
 @pytest.mark.parametrize("metadata", [[], [column("passwd"), column("future_auth_token")]])

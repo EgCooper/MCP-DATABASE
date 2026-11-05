@@ -2,13 +2,39 @@
 """MCP MySQL server entrypoint."""
 
 import argparse
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import Tool as MCPTool
+from pydantic import ValidationError
 
 from mcp_mysql import tools
+from mcp_mysql.validation import SampleLimit, TableName, TOOL_ARGUMENT_MODELS
 
-mcp = FastMCP(
+
+class _ValidatedMCP(FastMCP):
+    """Validate raw arguments before FastMCP can coerce or discard them."""
+
+    async def list_tools(self) -> list[MCPTool]:
+        definitions = await super().list_tools()
+        for definition in definitions:
+            definition.inputSchema = TOOL_ARGUMENT_MODELS[definition.name].model_json_schema()
+        return definitions
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        if type(name) is not str or len(name) > 64 or name not in TOOL_ARGUMENT_MODELS:
+            raise ToolError("Unknown tool.")
+        try:
+            TOOL_ARGUMENT_MODELS[name].model_validate(arguments)
+        except ValidationError:
+            # Do not echo potentially huge or sensitive argument values in validation errors.
+            raise ToolError("Invalid arguments. Use the tool's input schema.") from None
+        return await super().call_tool(name, arguments)
+
+
+mcp = _ValidatedMCP(
     "mcp-mysql",
     instructions=(
         "MySQL MCP for exploring the configured database with fixed queries.\n"
@@ -21,6 +47,8 @@ mcp = FastMCP(
         "- Discover table names with list_tables before inspecting them.\n"
         "- Inspect columns with describe_table before requesting sample rows.\n"
         "- Keep samples small; sample_rows accepts limits from 1 to 100.\n"
+        "- If truncated is true, explain that content is incomplete. "
+        "Check truncation for shortened fields or omitted rows.\n"
         "\n"
         "Recommended workflow:\n"
         "1) test_connection to verify connectivity.\n"
@@ -34,20 +62,20 @@ mcp = FastMCP(
 )
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def test_connection() -> str:
     """Test the MySQL connection and return database name and version."""
     return tools.test_connection()
 
 
-@mcp.tool()
+@mcp.tool(structured_output=False)
 def list_tables() -> str:
     """List existing tables permitted by the server's access policy."""
     return tools.list_tables()
 
 
-@mcp.tool()
-def describe_table(table_name: str) -> str:
+@mcp.tool(structured_output=False)
+def describe_table(table_name: TableName) -> str:
     """
     Describe only permitted columns of an authorized MySQL table.
 
@@ -57,8 +85,8 @@ def describe_table(table_name: str) -> str:
     return tools.describe_table(table_name)
 
 
-@mcp.tool()
-def sample_rows(table_name: str, limit: int = 10) -> str:
+@mcp.tool(structured_output=False)
+def sample_rows(table_name: TableName, limit: SampleLimit = 10) -> str:
     """
     Return sample rows containing only permitted columns of an authorized table.
 

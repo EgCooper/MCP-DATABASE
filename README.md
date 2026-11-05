@@ -8,6 +8,10 @@ config.py  → Centraliza la configuración.
 
 access.py  → Define las tablas y columnas permitidas para las herramientas.
 
+validation.py → Define los argumentos estrictos y sus esquemas MCP.
+
+responses.py → Limita el contenido JSON e informa cualquier recorte.
+
 Herramientas disponibles:
 
 - `test_connection`: verifica la conexión y devuelve la base y la versión de MySQL.
@@ -96,6 +100,52 @@ no implementa una alternativa para MariaDB. Se requiere Connector/Python 9.2.0
 o superior para `read_timeout` y `write_timeout`; después de actualizar ejecuta
 `python -m pip install -e '.[dev]'` en tu entorno y reinicia el MCP.
 
+Validación de argumentos y límites de contenido:
+
+- Los esquemas publicados y la validación del servidor exigen los mismos
+  argumentos. Se rechazan parámetros desconocidos o ausentes, sin repetir sus
+  valores en el mensaje de error. Las herramientas sin argumentos solo aceptan `{}`.
+- `table_name` debe ser texto de 1 a 64 caracteres ASCII alfanuméricos o `_`,
+  y coincidir con una tabla autorizada. No se normalizan nombres ni se admiten
+  prefijos de otra base. La misma restricción se aplica a llamadas Python directas.
+- `limit` debe ser un entero de 1 a 100. No se convierten cadenas como `"10"`,
+  números decimales como `10.0` ni booleanos como `true` a enteros. Se mantiene el
+  valor predeterminado de 10.
+- Cada campo de texto devuelve hasta 4000 caracteres. Las consultas SQL acotan
+  previamente los campos de texto/binarios y los metadatos potencialmente grandes;
+  se pide un carácter o byte adicional para detectar excesos.
+- El JSON de contenido de cada herramienta tiene un máximo de 64 KiB, contando
+  Unicode y caracteres escapados. La envoltura del protocolo MCP/HTTP es adicional.
+  El contenido se envía una sola vez como bloque de texto JSON, sin duplicarlo como
+  salida estructurada. Se requiere MCP SDK 1.10.0 o superior y menor que 2.
+- Si se supera el presupuesto, se conserva un prefijo de filas completas y se
+  actualiza `row_count` con las filas efectivamente devueltas. Si una sola fila
+  es demasiado grande, sus textos se acortan más, conservando sus valores numéricos
+  y el nombre de tabla. El documento JSON nunca se corta como texto bruto.
+
+Cuando hay un recorte se agregan `truncated: true` y `truncation`:
+
+```json
+{
+  "truncated": true,
+  "truncation": {
+    "field_count": 1,
+    "field_paths": ["rows[0].body"],
+    "omitted_rows": 5,
+    "response_limited": true
+  }
+}
+```
+
+`field_count` cuenta los campos acortados en el contenido devuelto; se detallan
+hasta 32 rutas y, si faltan detalles, aparece `unlisted_field_count`.
+`omitted_rows` se incluye únicamente si se omitieron filas por el tamaño de la
+respuesta; cuenta filas de la muestra obtenida, no todos los registros de la base.
+El formato también informa `omitted_columns` o `omitted_tables` si una lista de
+metadatos supera el presupuesto. `response_limited` distingue el ajuste por tamaño
+total del límite individual de campo. Las respuestas sin recortes conservan su
+estructura anterior y no agregan estos indicadores.
+
 Pruebas (sin conexiones a una base real):
 
 ```bash
@@ -108,7 +158,7 @@ Checklist:
 - [x] 1. Reducir el MCP a cuatro herramientas, sin SQL libre.
 - [x] 2. Aplicar la política común de tablas y columnas permitidas.
 - [x] 3. Reforzar `db.py`: solo lectura, tiempos máximos y cierre de recursos.
-- [ ] 4. Completar el endurecimiento de argumentos y límites de resultados.
+- [x] 4. Completar el endurecimiento de argumentos y límites de resultados.
 - [ ] 5. Uniformar respuestas y errores sin exponer detalles internos.
 - [ ] 6. Completar la validación en una base de pruebas aislada. Ya existen pruebas simuladas de acceso, transacciones, errores y recursos.
 - [ ] 7. Completar la documentación de configuración, permisos y despliegue.

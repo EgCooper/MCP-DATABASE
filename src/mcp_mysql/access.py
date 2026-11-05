@@ -7,6 +7,8 @@ Custom ticket columns come from the project's previous hours report.
 from collections.abc import Mapping
 from types import MappingProxyType
 
+from mcp_mysql.validation import MAX_TABLE_NAME_LENGTH
+
 
 ALLOWED_TABLE_COLUMNS: Mapping[str, tuple[str, ...]] = MappingProxyType({
     "ost_ticket": (
@@ -65,6 +67,10 @@ ALLOWED_TABLE_COLUMNS: Mapping[str, tuple[str, ...]] = MappingProxyType({
 
 def get_allowed_columns(table_name: str) -> tuple[str, ...]:
     """Reject unknown or malformed table names before any database access."""
-    if not isinstance(table_name, str) or table_name not in ALLOWED_TABLE_COLUMNS:
+    if (
+        type(table_name) is not str
+        or not 1 <= len(table_name) <= MAX_TABLE_NAME_LENGTH
+        or table_name not in ALLOWED_TABLE_COLUMNS
+    ):
         raise ValueError("Table is not available through this MCP.")
     return ALLOWED_TABLE_COLUMNS[table_name]

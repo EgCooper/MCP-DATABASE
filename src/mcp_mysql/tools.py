@@ -3,14 +3,14 @@
 
 from __future__ import annotations
 
-import json
-
 from mcp_mysql import db
 from mcp_mysql.access import ALLOWED_TABLE_COLUMNS, get_allowed_columns
+from mcp_mysql.responses import MAX_FIELD_CHARACTERS, encode_response
+from mcp_mysql.validation import MAX_SAMPLE_ROWS
 
 
 def _ok(payload: dict) -> str:
-    return json.dumps(payload, indent=2, default=str)
+    return encode_response(payload)
 
 
 def _err(message: str) -> str:
@@ -23,18 +23,39 @@ def _describe_allowed_columns(table_name: str) -> list[dict]:
     placeholders = ", ".join("%s" for _ in allowed)
     rows = db.fetch_all(
         f"""
-        SELECT COLUMN_NAME AS `Field`, COLUMN_TYPE AS `Type`,
+        SELECT COLUMN_NAME AS `Field`, LEFT(COLUMN_TYPE, %s) AS `Type`,
                IS_NULLABLE AS `Null`, COLUMN_KEY AS `Key`,
-               COLUMN_DEFAULT AS `Default`, EXTRA AS `Extra`
+               LEFT(COLUMN_DEFAULT, %s) AS `Default`, EXTRA AS `Extra`
         FROM INFORMATION_SCHEMA.COLUMNS
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = %s
           AND COLUMN_NAME IN ({placeholders})
         ORDER BY ORDINAL_POSITION
         """,
-        (table_name, *allowed),
+        (MAX_FIELD_CHARACTERS + 1, MAX_FIELD_CHARACTERS + 1, table_name, *allowed),
     )
     return [row for row in rows if row.get("Field") in allowed]
+
+
+def _sample_projection(metadata: list[dict]) -> tuple[str, tuple]:
+    """Bound text/binary data in MySQL before sending it to the application."""
+    scalar_types = {
+        "tinyint", "smallint", "mediumint", "int", "integer", "bigint",
+        "decimal", "numeric", "float", "double", "real", "bit", "bool", "boolean",
+        "date", "datetime", "timestamp", "time", "year",
+    }
+    expressions = []
+    parameters = []
+    for column in metadata:
+        name = column["Field"]
+        kind = column.get("Type", "").lower().split("(", 1)[0].split(" ", 1)[0]
+        if kind in scalar_types:
+            expressions.append(f"`{name}`")
+        else:
+            expressions.append(f"LEFT(`{name}`, %s) AS `{name}`")
+            # The extra character lets the response formatter detect a shortened value.
+            parameters.append(MAX_FIELD_CHARACTERS + 1)
+    return ", ".join(expressions), tuple(parameters)
 
 
 def test_connection() -> str:
@@ -83,7 +104,7 @@ def describe_table(table_name: str) -> str:
 
 def sample_rows(table_name: str, limit: int = 10) -> str:
     """Sample only approved, existing columns of an authorized table."""
-    if type(limit) is not int or limit < 1 or limit > 100:
+    if type(limit) is not int or limit < 1 or limit > MAX_SAMPLE_ROWS:
         return _err("limit must be between 1 and 100.")
 
     try:
@@ -91,9 +112,9 @@ def sample_rows(table_name: str, limit: int = 10) -> str:
         if not metadata:
             return _err("No permitted columns are available for this table.")
         columns = [row["Field"] for row in metadata]
-        projection = ", ".join(f"`{column}`" for column in columns)
+        projection, parameters = _sample_projection(metadata)
         rows = db.fetch_all(
-            f"SELECT {projection} FROM `{table_name}` LIMIT %s", (limit,)
+            f"SELECT {projection} FROM `{table_name}` LIMIT %s", (*parameters, limit)
         )
         safe_rows = [
             {column: row[column] for column in columns if column in row}

@@ -5,9 +5,10 @@ description = "MySQL MCP service with Streamable HTTP transport"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "mcp[cli]>=1.9.0,<2.0.0",
+    "mcp[cli]>=1.10.0,<2.0.0",
     "mysql-connector-python>=9.2.0",
     "python-dotenv>=1.0.0",
+    "pydantic>=2.7.0,<3.0.0",
 ]
 
 [project.optional-dependencies]
