@@ -1,165 +1,189 @@
-server.py  → Publica las herramientas y configura el servidor.
+# MCP osTicket (MySQL/MariaDB)
 
-tools.py   → Implementa las operaciones y valida sus argumentos.
+Servidor [MCP](https://modelcontextprotocol.io) de **solo lectura** sobre la base de datos de
+osTicket. Está pensado para que agentes de soporte consulten, desde un asistente (LibreChat),
+tickets, hilos, clientes, empresas y reportes de agentes, sin escribir SQL.
 
-db.py      → Gestiona conexiones y ejecuta SQL.
+El modelo solo puede usar herramientas con consultas fijas y parametrizadas. No existe una
+herramienta de SQL libre.
 
-config.py  → Centraliza la configuración.
+## Estado
 
-access.py  → Define las tablas y columnas permitidas para las herramientas.
+| Fase | Contenido | Estado |
+|------|-----------|--------|
+| 1. Refinar | Herramientas de soporte, seguridad, pruebas | Completa |
+| 2. Exponer | Despliegue HTTP con autenticación junto a LibreChat | Pendiente |
+| 3. LibreChat | Configuración del servidor MCP y del agente | Pendiente |
 
-validation.py → Define los argumentos estrictos y sus esquemas MCP.
+Hasta completar la fase 2, el transporte HTTP **no autentica clientes**. Úsalo solo en
+`127.0.0.1` o en una red controlada.
 
-responses.py → Limita el contenido JSON e informa cualquier recorte.
+## Instalación
 
-Herramientas disponibles:
-
-- `test_connection`: verifica la conexión y devuelve la base y la versión de MySQL.
-- `list_tables`: lista únicamente las tablas existentes autorizadas en la base configurada.
-- `describe_table(table_name)`: muestra únicamente las columnas autorizadas de una tabla permitida.
-- `sample_rows(table_name, limit=10)`: devuelve las columnas autorizadas de una muestra de entre 1 y 100 filas.
-
-El MCP utiliza consultas fijas y no ofrece ejecución de SQL libre. Usa una cuenta
-MySQL de solo lectura. Cada conexión configura la sesión y abre una transacción
-de solo lectura antes de quedar disponible para las consultas.
-
-Política de acceso:
-
-| Área | Tablas autorizadas |
-|---|---|
-| Tickets | `ost_ticket`, `ost_ticket__cdata`, `ost_ticket_status`, `ost_ticket_priority` |
-| Hilos e historial | `ost_thread`, `ost_thread_entry`, `ost_thread_event`, `ost_event` |
-| Solicitantes | `ost_user`, `ost_user_email` |
-| Agentes y asignaciones | `ost_staff`, `ost_department`, `ost_team`, `ost_team_member` |
-| Empresas y catálogos | `ost_list`, `ost_list_items` |
-| Clasificación | `ost_help_topic` |
-
-Toda tabla o columna ausente de `src/mcp_mysql/access.py` se rechaza por defecto,
-incluidos los campos nuevos. En `ost_staff` se permiten identificadores,
-nombres, departamento, estado de actividad, vacaciones y fechas; se excluyen
-contraseñas, permisos, contactos personales y campos internos.
-
-Las consultas de estructura y muestras utilizan únicamente las columnas
-autorizadas que existen en la base configurada. Si no existe ninguna, devuelven
-un error; nunca se utiliza `SELECT *`. Los nombres deben coincidir exactamente
-con los definidos en la política, sin prefijos de otra base ni comillas.
-
-La entidad es la empresa del ticket: `ost_ticket__cdata.listaEmpresa`, relacionada
-con `ost_list_items`. Se conservan los campos de horas del reporte anterior,
-como `time`, `timeExtra`, `horaExtra`, `horaCompensada` y los agentes de apoyo.
-Habilitar estos campos todavía no agrega herramientas de cálculo o reportes.
-
-Esta política se aplica a todos los consumidores del MCP. No reproduce los
-permisos individuales de osTicket ni filtra filas por usuario, empresa o tipo de
-hilo. Los textos autorizados de tickets e hilos pueden contener información
-sensible: el servicio debe mantenerse en una red privada controlada hasta
-preparar autenticación y autorización del consumidor.
-
-Protecciones de conexión y consulta:
-
-- Se configura `SET SESSION TRANSACTION READ ONLY` y se inicia explícitamente una
-  transacción con `readonly=True`. Si falla la configuración de protección, la
-  conexión se cierra y no se ejecuta la consulta de la herramienta.
-- No se ejecuta `commit()`. Al finalizar se revierte la transacción y se cierran
-  cursor y conexión. Si hay resultados pendientes, se desconecta sin descargarlos;
-  MySQL revierte la transacción al cerrar la sesión.
-- Se deshabilitan el autocommit, la descarga automática de resultados pendientes,
-  la capacidad de múltiples sentencias y la carga local de archivos del conector.
-- La lectura usa un cursor sin buffer y `fetchmany()`: se solicita el
-  límite interno más una fila para detectar excesos. El límite interno es de
-  1000 filas; `sample_rows` mantiene su máximo de 100. Un exceso devuelve error,
-  nunca un resultado parcial presentado como completo.
-- `fetch_one` acepta cero o una fila y rechaza resultados con más de una.
-- Los errores de limpieza no reemplazan el error original y siempre se intenta
-  cerrar la conexión, incluso si fallan el rollback o el cierre del cursor.
-
-Estas protecciones complementan los permisos de la cuenta: no los sustituyen.
-Las transacciones de solo lectura tienen excepciones para tablas temporales;
-las herramientas del MCP no ofrecen creación de tablas ni ejecución de SQL libre.
-Referencia: [transacciones de solo lectura de MySQL](https://dev.mysql.com/doc/refman/8.4/en/commit.html).
-
-Tiempos de espera opcionales (no hace falta modificar `.env` para usar los valores predeterminados):
-
-| Variable | Predeterminado | Alcance |
-|---|---|---|
-| `MYSQL_CONNECT_TIMEOUT` | `10` segundos | Establecimiento de conexión |
-| `MYSQL_READ_TIMEOUT` | `30` segundos | Espera de lectura del conector |
-| `MYSQL_WRITE_TIMEOUT` | `30` segundos | Espera de escritura del conector |
-| `MYSQL_QUERY_TIMEOUT_MS` | `15000` milisegundos | `MAX_EXECUTION_TIME` de la sesión MySQL |
-
-Todos deben ser enteros positivos; `0` no permite desactivar los límites. El
-tiempo de ejecución se aplica a los `SELECT` de solo lectura compatibles con
-`MAX_EXECUTION_TIME`, no al tiempo total de una llamada MCP. Los tiempos del
-conector limitan esperas de comunicación, no la duración total de una consulta.
-Consulta [MAX_EXECUTION_TIME](https://dev.mysql.com/doc/refman/8.4/en/server-system-variables.html#sysvar_max_execution_time)
-y [los tiempos del conector](https://dev.mysql.com/doc/connectors/en/connector-python-connectargs.html).
-
-Se requiere un servidor MySQL que soporte `READ ONLY` y `MAX_EXECUTION_TIME`;
-si no los soporta, la operación falla sin quitar las protecciones. Este flujo
-no implementa una alternativa para MariaDB. Se requiere Connector/Python 9.2.0
-o superior para `read_timeout` y `write_timeout`; después de actualizar ejecuta
-`python -m pip install -e '.[dev]'` en tu entorno y reinicia el MCP.
-
-Validación de argumentos y límites de contenido:
-
-- Los esquemas publicados y la validación del servidor exigen los mismos
-  argumentos. Se rechazan parámetros desconocidos o ausentes, sin repetir sus
-  valores en el mensaje de error. Las herramientas sin argumentos solo aceptan `{}`.
-- `table_name` debe ser texto de 1 a 64 caracteres ASCII alfanuméricos o `_`,
-  y coincidir con una tabla autorizada. No se normalizan nombres ni se admiten
-  prefijos de otra base. La misma restricción se aplica a llamadas Python directas.
-- `limit` debe ser un entero de 1 a 100. No se convierten cadenas como `"10"`,
-  números decimales como `10.0` ni booleanos como `true` a enteros. Se mantiene el
-  valor predeterminado de 10.
-- Cada campo de texto devuelve hasta 4000 caracteres. Las consultas SQL acotan
-  previamente los campos de texto/binarios y los metadatos potencialmente grandes;
-  se pide un carácter o byte adicional para detectar excesos.
-- El JSON de contenido de cada herramienta tiene un máximo de 64 KiB, contando
-  Unicode y caracteres escapados. La envoltura del protocolo MCP/HTTP es adicional.
-  El contenido se envía una sola vez como bloque de texto JSON, sin duplicarlo como
-  salida estructurada. Se requiere MCP SDK 1.10.0 o superior y menor que 2.
-- Si se supera el presupuesto, se conserva un prefijo de filas completas y se
-  actualiza `row_count` con las filas efectivamente devueltas. Si una sola fila
-  es demasiado grande, sus textos se acortan más, conservando sus valores numéricos
-  y el nombre de tabla. El documento JSON nunca se corta como texto bruto.
-
-Cuando hay un recorte se agregan `truncated: true` y `truncation`:
-
-```json
-{
-  "truncated": true,
-  "truncation": {
-    "field_count": 1,
-    "field_paths": ["rows[0].body"],
-    "omitted_rows": 5,
-    "response_limited": true
-  }
-}
-```
-
-`field_count` cuenta los campos acortados en el contenido devuelto; se detallan
-hasta 32 rutas y, si faltan detalles, aparece `unlisted_field_count`.
-`omitted_rows` se incluye únicamente si se omitieron filas por el tamaño de la
-respuesta; cuenta filas de la muestra obtenida, no todos los registros de la base.
-El formato también informa `omitted_columns` o `omitted_tables` si una lista de
-metadatos supera el presupuesto. `response_limited` distingue el ajuste por tamaño
-total del límite individual de campo. Las respuestas sin recortes conservan su
-estructura anterior y no agregan estos indicadores.
-
-Pruebas (sin conexiones a una base real):
+Requiere Python 3.11 o superior.
 
 ```bash
-python -m pip install -e '.[dev]'
-python -m pytest -q
+python -m venv .venv
+.venv/bin/python -m pip install -e '.[dev]'
+cp .env.example .env   # y edita las credenciales
 ```
 
-Checklist:
+### Cuenta de base de datos
 
-- [x] 1. Reducir el MCP a cuatro herramientas, sin SQL libre.
-- [x] 2. Aplicar la política común de tablas y columnas permitidas.
-- [x] 3. Reforzar `db.py`: solo lectura, tiempos máximos y cierre de recursos.
-- [x] 4. Completar el endurecimiento de argumentos y límites de resultados.
-- [ ] 5. Uniformar respuestas y errores sin exponer detalles internos.
-- [ ] 6. Completar la validación en una base de pruebas aislada. Ya existen pruebas simuladas de acceso, transacciones, errores y recursos.
-- [ ] 7. Completar la documentación de configuración, permisos y despliegue.
-- [ ] 8. Preparar autenticación, HTTPS y conexión con LibreChat.
+Usa una cuenta exclusiva y de solo lectura. El MCP genera los permisos por columna que
+corresponden exactamente a su política de acceso:
+
+```bash
+python -m mcp_mysql grants --database osticket --user mcp_readonly --host localhost
+```
+
+Revisa la salida y ejecútala como administrador de la base. Con esos permisos, aunque el MCP
+tuviera un defecto, la base no le entregaría contraseñas, correos del personal ni otras
+columnas fuera de la política. `MYSQL_USER` es obligatorio: no hay usuario por defecto.
+
+### Variables principales (`.env`)
+
+| Variable | Uso |
+|----------|-----|
+| `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE` | Conexión |
+| `MYSQL_SSL_CA`, `MYSQL_SSL_VERIFY_IDENTITY` | TLS con verificación de certificado (recomendado si la base es remota) |
+| `MYSQL_QUERY_TIMEOUT_MS` | Tiempo máximo por consulta (15000 por defecto) |
+| `OSTICKET_COMPANY_LIST_ID` | Lista de osTicket con las empresas (3 en esta instalación) |
+| `MCP_ENABLE_EXPLORATION_TOOLS` | Muestra `list_tables`, `describe_table` y `sample_rows` (desactivado por defecto) |
+| `MCP_SCHEMA_CACHE_SECONDS` | Caché del esquema detectado (300 s) |
+| `MCP_MAX_DB_CONNECTIONS` | Conexiones simultáneas a la base (8) |
+
+Las variables ya definidas en el entorno tienen prioridad sobre `.env`.
+
+## Ejecución
+
+```bash
+# Clientes que lanzan el proceso (Claude Code, Cursor, Claude Desktop): stdio
+python -m mcp_mysql --transport stdio
+
+# HTTP (Streamable HTTP) en http://127.0.0.1:8000/mcp
+python -m mcp_mysql --host 127.0.0.1 --port 8000
+```
+
+El transporte por defecto es HTTP. Las entradas de cliente deben pedir `--transport stdio`
+de forma explícita. `--allowed-host` añade nombres aceptados en el encabezado `Host`; protege
+contra DNS rebinding, pero no autentica.
+
+### Registrar el MCP en un cliente
+
+```bash
+python -m mcp_mysql setup --client claude-code   # imprime el comando "claude mcp add"
+python -m mcp_mysql setup --client cursor        # escribe ~/.cursor/mcp.json
+python -m mcp_mysql setup --client claude        # Claude Desktop
+python -m mcp_mysql setup --print                # solo muestra el JSON
+```
+
+Las credenciales se quedan en `.env` y nunca se copian a la configuración del cliente.
+
+## Herramientas
+
+| Herramienta | Para qué |
+|-------------|----------|
+| `test_connection` | Conexión, versión y **hora del servidor** (para "hoy", "esta semana") |
+| `list_catalog` | Estados, departamentos, prioridades, temas de ayuda, equipos y SLA con sus IDs |
+| `find_companies` | Buscar empresa (entidad) por nombre y obtener `company_id` |
+| `list_company_tickets` | Tickets de una empresa (`limit=1` devuelve el último) |
+| `search_tickets` | Búsqueda con filtros combinables y paginación |
+| `count_tickets` | Totales exactos con los mismos filtros |
+| `ticket_report` | Conteos agrupados por estado, agente, empresa, mes, etc., con horas opcionales |
+| `get_ticket` | Detalle completo: prioridad, SLA, solicitante, colaboradores, apoyo, horas y resumen del hilo |
+| `get_ticket_thread` | Conversación en texto plano, con mensajes, respuestas y notas internas |
+| `find_agents` | Buscar agentes y obtener `staff_id` |
+| `get_agent_report` | Carga, actividad, apoyo y horas de un agente en un período |
+| `find_users` | Buscar clientes por nombre o correo y obtener `user_id` |
+| `get_user` | Perfil del cliente: correos, historial, empresas y último ticket |
+
+Filtros de búsqueda, conteo y reportes:
+- **Personas y empresa:** `company_id`, `staff_id`, `assigned`, `user_id` (`include_collaborations` agrega los tickets donde el usuario está en copia).
+- **Estado:** `status` (nombre exacto) y `state` (`open`, `closed`, `archived`, `deleted`).
+- **Clasificación:** `dept_id`, `priority_id`, `topic_id` y `overdue`.
+- **Fechas:** `created_from`/`created_to` y `closed_from`/`closed_to`, como días calendario inclusivos.
+- **Texto:** `subject` (subcadena literal).
+
+Ejemplos de preguntas y las herramientas que deberían usarse están en
+[docs/banco-de-preguntas.md](docs/banco-de-preguntas.md).
+
+### Contrato de respuesta
+
+Toda respuesta es JSON con `ok`, `data`, `error` y `meta`:
+
+- `meta.truncated` y `meta.truncation` indican campos recortados (4000 caracteres) o filas
+  omitidas por el límite de 64 KiB por respuesta.
+- La paginación usa `next_offset`, `next_after_entry_id` o `next_before_entry_id` mientras
+  `has_more` sea `true`. El desplazamiento máximo es 10000.
+- `unavailable_fields` lista campos que esta base no tiene; no significa que estén vacíos.
+- Los errores tienen un `code` estable, un mensaje seguro, `retryable` y `meta.request_id`,
+  pero nunca el texto del driver, consultas ni credenciales.
+
+## Particularidades de esta instalación de osTicket
+
+Verificadas contra la base real (MariaDB 10.3, ~12 000 tickets):
+
+- **Empresa:** `listaEmpresa` guarda `"id,Nombre"` o solo `"id"`, siempre de la lista 3.
+  Un ticket tiene una sola empresa.
+- **Horas:** `time`, `timeExtra` y `timeApoyoN` son texto `h:mm`. Los reportes suman solo los
+  valores con ese formato y cuentan el resto en `unparsed_time_values`, sin adivinarlos.
+- **Personal de apoyo** (`apoyo1` a `apoyo3`): el `staff_id` se lee de las respuestas del
+  formulario (`{"s12":"Nombre"}`), porque `__cdata` a menudo guarda solo el nombre.
+- **Estados:** "Resuelto" está configurado como estado `open`. Usa
+  `list_catalog("statuses")` para ver qué cuenta como abierto.
+- **Zona horaria:** la base usa la hora del sistema (UTC−4). Las fechas de los filtros se
+  interpretan en esa zona.
+- Un número de ticket está duplicado: `get_ticket` devuelve `AMBIGUOUS_MATCH` en vez de elegir uno.
+
+## Seguridad
+
+Varias capas independientes:
+
+1. **Lista de columnas permitidas** ([access.py](src/mcp_mysql/access.py)). Lo que no está
+   listado se rechaza, incluidas las columnas que agreguen futuras versiones. Las tablas de
+   formularios solo se usan para el personal de apoyo y nunca se exploran.
+2. **Consultas fijas y parametrizadas.** Ningún argumento se interpola en el SQL, ni siquiera
+   los comodines de `LIKE`.
+3. **Sesión de solo lectura:** `SET SESSION TRANSACTION READ ONLY`, transacción de solo
+   lectura, sin multi-sentencias ni `LOCAL INFILE`, tiempo máximo por consulta y nunca `COMMIT`.
+4. **Permisos por columna** en la base (`grants`).
+5. **Validación estricta** de argumentos antes de tocar la base. Los argumentos desconocidos
+   se rechazan.
+6. **Errores sin filtrar detalles** y **auditoría** de cada llamada en el logger
+   `mcp_mysql.audit`: `request_id`, herramienta, resultado y duración, sin argumentos ni datos.
+7. El texto de tickets e hilos se trata como no confiable. Las instrucciones del servidor
+   piden al modelo no seguir órdenes que contenga.
+
+Todos los agentes de soporte ven todos los tickets, notas internas incluidas. Se exponen
+nombres y correos de clientes; del personal se exponen nombre, departamento y estado, pero
+no su correo, teléfono ni credenciales.
+
+## Rendimiento
+
+Cada llamada abre una conexión, protegida como se describe arriba, y ejecuta todas sus
+consultas en ella. Desde el equipo de desarrollo, con 113 ms de latencia hacia la base, cada
+llamada tarda unos 1,6 s, casi todo en establecer la conexión. Si en producción la base no
+está en la misma red, conviene evaluar un pool de conexiones (fase 2).
+
+Las herramientas corren en hilos de trabajo, así que una consulta lenta no bloquea a los
+demás usuarios.
+
+## Pruebas
+
+```bash
+.venv/bin/python -m pytest -q
+```
+
+Las pruebas unitarias no se conectan a ninguna base. Las de integración son opcionales y
+usan un servidor desechable con `root` sin contraseña, solo en `127.0.0.1`:
+
+```bash
+docker run --rm -d --name mcp-it -p 127.0.0.1:33061:3306 -e MYSQL_ALLOW_EMPTY_PASSWORD=yes mariadb:10.3
+MCP_TEST_MYSQL_PORT=33061 .venv/bin/python -m pytest -q tests/test_mysql_integration.py
+docker stop mcp-it
+```
+
+Cada ejecución crea un esquema con datos ficticios y una cuenta que solo tiene los permisos
+por columna de la política, y los elimina al terminar. Están verificadas con MySQL 8.0 y
+MariaDB 10.3.
