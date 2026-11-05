@@ -1,4 +1,4 @@
-"""Explicit table and column access for the osTicket exploration tools.
+"""Explicit table and column access for the osTicket tools.
 
 Names not present here are denied, including columns added by future upgrades.
 Custom ticket columns come from the project's previous hours report.
@@ -42,6 +42,8 @@ ALLOWED_TABLE_COLUMNS: Mapping[str, tuple[str, ...]] = MappingProxyType({
         "id", "thread_id", "thread_type", "event_id", "staff_id", "team_id",
         "dept_id", "topic_id", "username", "uid", "uid_type", "annulled", "timestamp",
     ),
+    # Requesters and CC participants of a ticket thread.
+    "ost_thread_collaborator": ("id", "thread_id", "user_id", "role", "created"),
     "ost_event": ("id", "name", "description"),
     "ost_user": (
         "id", "name", "default_email_id", "status", "created", "updated",
@@ -57,6 +59,7 @@ ALLOWED_TABLE_COLUMNS: Mapping[str, tuple[str, ...]] = MappingProxyType({
     ),
     "ost_team": ("team_id", "lead_id", "name", "created", "updated"),
     "ost_team_member": ("team_id", "staff_id"),
+    "ost_sla": ("id", "name", "grace_period"),
     "ost_list": ("id", "name", "name_plural", "type", "created", "updated"),
     "ost_list_items": ("id", "list_id", "status", "value", "sort"),
     "ost_help_topic": (
@@ -65,13 +68,33 @@ ALLOWED_TABLE_COLUMNS: Mapping[str, tuple[str, ...]] = MappingProxyType({
     ),
 })
 
+# Read only by fixed business queries, restricted to the support-staff fields
+# (apoyo1..3). They hold every custom form answer, so they are never listed,
+# described or sampled by the exploration tools.
+INTERNAL_TABLE_COLUMNS: Mapping[str, tuple[str, ...]] = MappingProxyType({
+    "ost_form_entry": ("id", "form_id", "object_id", "object_type"),
+    "ost_form_entry_values": ("entry_id", "field_id", "value"),
+    "ost_form_field": ("id", "form_id", "name"),
+})
+
+
+def _valid_name(table_name: object) -> bool:
+    return type(table_name) is str and 1 <= len(table_name) <= MAX_TABLE_NAME_LENGTH
+
 
 def get_allowed_columns(table_name: str) -> tuple[str, ...]:
-    """Reject unknown or malformed table names before any database access."""
-    if (
-        type(table_name) is not str
-        or not 1 <= len(table_name) <= MAX_TABLE_NAME_LENGTH
-        or table_name not in ALLOWED_TABLE_COLUMNS
-    ):
+    """Columns visible to exploration tools; reject unknown or malformed names before any database access."""
+    if not _valid_name(table_name) or table_name not in ALLOWED_TABLE_COLUMNS:
         raise AccessDeniedError("Table is not available through this MCP.")
     return ALLOWED_TABLE_COLUMNS[table_name]
+
+
+def get_query_columns(table_name: str) -> tuple[str, ...]:
+    """Columns that fixed business queries may reference (exploration set plus internal tables)."""
+    if _valid_name(table_name) and table_name in INTERNAL_TABLE_COLUMNS:
+        return INTERNAL_TABLE_COLUMNS[table_name]
+    return get_allowed_columns(table_name)
+
+
+def all_query_tables() -> dict[str, tuple[str, ...]]:
+    return {**ALLOWED_TABLE_COLUMNS, **INTERNAL_TABLE_COLUMNS}

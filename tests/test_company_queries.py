@@ -82,7 +82,9 @@ def test_latest_ticket_is_filtered_and_sorted_on_the_database(database):
     assert params[-3:] == ("218", 2, 0)
     assert query.count("%s") == len(params)
     assert "SELECT *" not in query and "passwd" not in query
-    assert "LEFT(c.`analisis`, %s)" in query and "LEFT(c.`solucion`, %s)" in query
+    # List rows are summaries: long analysis/solution text is only returned by get_ticket.
+    assert "analisis" not in query and "solucion" not in query
+    assert "LEFT JOIN `ost_list_items` li ON li.`list_id` = %s" in query
 
 
 def test_missing_company_does_not_fall_back_to_unfiltered_tickets(database):
@@ -127,7 +129,7 @@ def test_invalid_company_ids_fail_before_database_access(database, identifier):
 @pytest.mark.parametrize("limit", [0, 51, "10", 1.5, True, None])
 def test_invalid_business_limits_are_rejected(database, limit):
     assert json.loads(tools.find_companies("HOSPICIO", limit))["error"]["code"] == "INVALID_ARGUMENTS"
-    assert json.loads(tools.list_company_tickets(218, limit))["error"]["code"] == "INVALID_ARGUMENTS"
+    assert json.loads(tools.list_company_tickets(218, limit=limit))["error"]["code"] == "INVALID_ARGUMENTS"
     database.one.assert_not_called()
     database.fetch.assert_not_called()
 

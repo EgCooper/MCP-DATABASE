@@ -1,7 +1,8 @@
-"""Opt-in real SQL tests. Only use a disposable MySQL on loopback, never .env.
+"""Opt-in real SQL tests. Only use a disposable MySQL/MariaDB on loopback, never .env.
 
-Set MCP_TEST_MYSQL_PORT to a temporary MySQL port (root, empty password).
-Each run creates a uniquely named schema and SELECT-only user, then removes them.
+Set MCP_TEST_MYSQL_PORT to a temporary server port (root, empty password).
+Each run creates a uniquely named schema and a reader account that only has
+column-level SELECT on the access policy columns, then removes both.
 """
 
 import asyncio
@@ -13,11 +14,107 @@ from uuid import uuid4
 import mysql.connector
 import pytest
 
-from mcp_mysql import db, tools
+from mcp_mysql import db, tickets, tools
+from mcp_mysql.access import all_query_tables
 from mcp_mysql.config import MySQLConfig
 from mcp_mysql.server import mcp
 
 pytestmark = pytest.mark.skipif(not os.environ.get("MCP_TEST_MYSQL_PORT"), reason="Requires an explicit disposable MySQL port")
+
+TABLES = {
+    "ost_ticket": "ticket_id INT UNSIGNED PRIMARY KEY, ticket_pid INT UNSIGNED, number VARCHAR(20), user_id INT UNSIGNED, "
+                  "status_id INT UNSIGNED, dept_id INT UNSIGNED, sla_id INT UNSIGNED, topic_id INT UNSIGNED, staff_id INT UNSIGNED, "
+                  "team_id INT UNSIGNED, source ENUM('Web','Email','Phone','API','Other'), isoverdue TINYINT UNSIGNED, "
+                  "isanswered TINYINT UNSIGNED, duedate DATETIME, est_duedate DATETIME, reopened DATETIME, closed DATETIME, "
+                  "lastupdate DATETIME, created DATETIME, updated DATETIME, ip_address VARCHAR(64)",
+    # Optional custom fields horaCompensada, fechaInicio... are deliberately absent; secret_token is unapproved.
+    "ost_ticket__cdata": "ticket_id INT UNSIGNED PRIMARY KEY, priority MEDIUMTEXT, subject MEDIUMTEXT, listaEmpresa MEDIUMTEXT, "
+                         "tipoSolicitud MEDIUMTEXT, causa MEDIUMTEXT, analisis MEDIUMTEXT, solucion MEDIUMTEXT, time MEDIUMTEXT, "
+                         "timeExtra MEDIUMTEXT, apoyo1 MEDIUMTEXT, timeApoyo1 MEDIUMTEXT, apoyo2 MEDIUMTEXT, timeApoyo2 MEDIUMTEXT, "
+                         "apoyo3 MEDIUMTEXT, timeApoyo3 MEDIUMTEXT, secret_token MEDIUMTEXT",
+    "ost_ticket_status": "id INT PRIMARY KEY, name VARCHAR(60), state VARCHAR(16), sort INT UNSIGNED",
+    "ost_ticket_priority": "priority_id TINYINT PRIMARY KEY, priority VARCHAR(60), priority_desc VARCHAR(30), priority_urgency TINYINT UNSIGNED",
+    "ost_department": "id INT UNSIGNED PRIMARY KEY, name VARCHAR(128), signature TEXT",
+    "ost_help_topic": "topic_id INT UNSIGNED PRIMARY KEY, topic VARCHAR(128), dept_id INT UNSIGNED, notes TEXT",
+    "ost_team": "team_id INT UNSIGNED PRIMARY KEY, name VARCHAR(125)",
+    "ost_user": "id INT UNSIGNED PRIMARY KEY, default_email_id INT, status INT UNSIGNED, name VARCHAR(128), created DATETIME, updated DATETIME",
+    "ost_user_email": "id INT UNSIGNED PRIMARY KEY, user_id INT UNSIGNED, flags INT UNSIGNED, address VARCHAR(255)",
+    "ost_staff": "staff_id INT UNSIGNED PRIMARY KEY, dept_id INT UNSIGNED, firstname VARCHAR(32), lastname VARCHAR(32), "
+                 "isactive TINYINT, onvacation TINYINT, passwd VARCHAR(128), email VARCHAR(255)",
+    "ost_list_items": "id INT UNSIGNED PRIMARY KEY, list_id INT, status INT UNSIGNED, value VARCHAR(255), extra VARCHAR(255)",
+    "ost_thread": "id INT UNSIGNED PRIMARY KEY, object_id INT UNSIGNED, object_type CHAR(1), created DATETIME",
+    "ost_thread_entry": "id INT UNSIGNED PRIMARY KEY, thread_id INT UNSIGNED, staff_id INT UNSIGNED, user_id INT UNSIGNED, type CHAR(1), "
+                        "poster VARCHAR(128), title VARCHAR(255), body MEDIUMTEXT, format VARCHAR(16), ip_address VARCHAR(64), "
+                        "created DATETIME, updated DATETIME",
+    "ost_thread_collaborator": "id INT UNSIGNED PRIMARY KEY, flags INT UNSIGNED, thread_id INT UNSIGNED, user_id INT UNSIGNED, role CHAR(1)",
+    "ost_form_field": "id INT UNSIGNED PRIMARY KEY, form_id INT UNSIGNED, name VARCHAR(64), configuration TEXT",
+    "ost_form_entry": "id INT UNSIGNED PRIMARY KEY, form_id INT UNSIGNED, object_id INT UNSIGNED, object_type CHAR(1)",
+    "ost_form_entry_values": "entry_id INT UNSIGNED, field_id INT UNSIGNED, value TEXT, PRIMARY KEY (entry_id, field_id)",
+    # ost_sla is deliberately missing: the detail must report "sla" as unavailable instead of failing.
+}
+
+
+def _insert(cursor, table, rows):
+    placeholders = ", ".join(["%s"] * len(rows[0]))
+    cursor.executemany(f"INSERT INTO `{table}` VALUES ({placeholders})", rows)
+
+
+def _seed(cursor):
+    _insert(cursor, "ost_ticket_status", [(1, "Abierto", "open", 1), (2, "Resuelto", "closed", 2), (3, "Cerrado", "closed", 3)])
+    _insert(cursor, "ost_ticket_priority", [(1, "low", "Low", 4), (2, "normal", "Normal", 3), (3, "high", "High", 2)])
+    _insert(cursor, "ost_department", [(1, "Soporte", "never-expose"), (2, "Desarrollo", "never-expose")])
+    _insert(cursor, "ost_help_topic", [(1, "Incidente", 1, "never-expose")])
+    _insert(cursor, "ost_team", [(1, "Mesa")])
+    _insert(cursor, "ost_user", [(8, 80, 0, "Cliente Ana", None, None), (9, 90, 0, "Cliente Dos", None, None)])
+    _insert(cursor, "ost_user_email", [(80, 8, 0, "ana@cliente.test"), (81, 8, 0, "ana.personal@correo.test"), (90, 9, 0, "dos@cliente.test")])
+    _insert(cursor, "ost_staff", [(7, 1, "Ana", "Pérez", 1, 0, "never-expose", "never-expose@x.test"),
+                                  (10, 2, "Luis", "Prueba", 0, 0, "never-expose", "never-expose@x.test")])
+    items = [(i, 3, 1, f"Empresa {i:03}", None) for i in range(1, 151)]
+    items += [(218, 3, 1, "HOSPICIO", None), (219, 3, 1, "Otra empresa", None), (300, 9, 1, "HOSPICIO otra lista", None),
+              (400, 4, 1, "Incidente", None), (500, 5, 1, "Configuración", None)]
+    _insert(cursor, "ost_list_items", items)
+    columns = "(ticket_id, number, status_id, dept_id, user_id, staff_id, created, lastupdate, closed, topic_id, isoverdue, source)"
+    old = [(2000 + i, f"{2000 + i:08}", 1, 1, 8, 7, datetime(2024, 1, 1) + timedelta(days=i), None, None, 1, 0, "Email") for i in range(150)]
+    recent = [
+        (90001, "000001", 2, 1, 9, 10, "2026-11-05 23:59:59", "2026-11-06 09:00:00", "2026-11-06 00:00:01", 1, 0, "Web"),
+        (90002, "000002", 2, 1, 9, 10, "2026-11-05 23:59:59", "2026-11-05 23:59:59", None, 1, 0, "Web"),
+        (90003, "000003", 1, 2, 8, 7, "2026-11-06 00:00:00", None, None, 1, 1, "Phone"),
+        (90004, "000004", 1, 1, 8, 7, "2023-01-01 00:00:00", None, None, None, 0, "API"),
+        (90005, "DUPLICATE", 1, 1, 8, 7, "2025-01-01 00:00:00", None, None, None, 0, "Web"),
+        (90006, "DUPLICATE", 1, 1, 8, 0, "2025-01-01 00:00:00", None, None, None, 0, "Web"),
+    ]
+    cursor.executemany(f"INSERT INTO ost_ticket {columns} VALUES ({', '.join(['%s'] * 12)})", old + recent)
+    cdata = "(ticket_id, priority, subject, listaEmpresa, tipoSolicitud, causa, analisis, solucion, time, timeExtra, apoyo1, timeApoyo1, secret_token)"
+    custom = [(row[0], "2", f"Consulta {row[0]}", "218,HOSPICIO", "400,Incidente", "500", "Diagnóstico", "Solución", "01:30", None, None, None, "never-expose") for row in old]
+    custom += [
+        (90001, "3", "Ticket reciente", "218,HOSPICIO", "400,Incidente", "500", "Análisis", "Solución", "02:15", "0:45", "Luis Prueba", "1:00", "never-expose"),
+        (90002, "2", "Literal _%= prueba", " 218 ,HOSPICIO", None, None, None, None, "00:20", None, None, None, "never-expose"),
+        (90003, "2", "Ticket siguiente día", "219,Otra empresa", None, None, None, None, "1.5h", None, None, None, "never-expose"),
+    ]
+    cursor.executemany(f"INSERT INTO ost_ticket__cdata {cdata} VALUES ({', '.join(['%s'] * 13)})", custom)
+    _insert(cursor, "ost_thread", [(50, 90002, "T", None), (51, 90002, "A", None), (52, 90003, "T", None), (60, 90001, "T", None)])
+    entries = [(i, 50, 7, 8, "M", "Cliente", "Mensaje", "x" * 5000 if i == 2 else f"Mensaje {i}", "text", "10.0.0.1", None, None) for i in range(1, 6)]
+    entries += [(6, 51, 7, 8, "N", "Agente", "Tarea", "NOT A TICKET", "text", "10.0.0.1", None, None),
+                (7, 52, 7, 8, "N", "Agente", "Otro", "OTHER TICKET", "text", "10.0.0.1", None, None),
+                (8, 50, 7, 0, "N", "Ana Pérez", "Nota", "<p>Revisar <b>servidor</b></p><script>x()</script>", "html", "10.0.0.1",
+                 "2026-11-05 10:00:00", None)]
+    entries += [(i, 60, 7, 8, "R", "Agente", "Respuesta", "😀" * 4001, "text", "10.0.0.1", "2026-11-05 12:00:00", None) for i in range(100, 120)]
+    _insert(cursor, "ost_thread_entry", entries)
+    _insert(cursor, "ost_thread_collaborator", [(1, 0, 50, 8, "M")])
+    _insert(cursor, "ost_form_field", [(1, 2, "apoyo1", "never-expose"), (2, 2, "apoyo2", "never-expose"), (3, 2, "phone", "never-expose")])
+    _insert(cursor, "ost_form_entry", [(1, 2, 90001, "T"), (2, 2, 90003, "T"), (3, 1, 8, "U")])
+    _insert(cursor, "ost_form_entry_values", [(1, 1, '{"s10":"Luis Prueba"}'), (2, 2, '{"s10":"Luis Prueba"}'), (3, 3, "never-expose")])
+
+
+def _grant_policy_columns(cursor, schema, account):
+    """Column-level SELECT on the policy columns that exist in this schema, as `grants` would."""
+    created = {table: {part.split()[0] for part in definition.split(", ") if not part.startswith("PRIMARY")}
+               for table, definition in TABLES.items()}
+    for table, columns in all_query_tables().items():
+        granted = [column for column in columns if column in created.get(table, ())]
+        if granted:
+            listed = ", ".join(f"`{column}`" for column in granted)
+            cursor.execute(f"GRANT SELECT ({listed}) ON `{schema}`.`{table}` TO {account}")
 
 
 @pytest.fixture(scope="module")
@@ -25,61 +122,22 @@ def isolated_database():
     port = int(os.environ["MCP_TEST_MYSQL_PORT"])
     token = uuid4().hex[:12]
     schema, reader = f"mcp_query_test_{token}", f"reader_{token}"
+    account = f"'{reader}'@'%'"
     admin = mysql.connector.connect(host="127.0.0.1", port=port, user="root", password="", use_pure=True)
     cursor = admin.cursor()
     try:
         cursor.execute(f"CREATE DATABASE `{schema}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
         cursor.execute(f"USE `{schema}`")
-        definitions = {
-            "ost_ticket": "ticket_id INT PRIMARY KEY, number VARCHAR(32), status_id INT, dept_id INT, user_id INT, staff_id INT, created DATETIME, lastupdate DATETIME, closed DATETIME",
-            # Deliberately omit optional custom fields and include an unapproved field.
-            "ost_ticket__cdata": "ticket_id INT PRIMARY KEY, subject TEXT, listaEmpresa TEXT, analisis TEXT, solucion TEXT, time VARCHAR(32), secret_token TEXT",
-            "ost_ticket_status": "id INT PRIMARY KEY, name VARCHAR(64), state VARCHAR(32)",
-            "ost_department": "id INT PRIMARY KEY, name VARCHAR(64)",
-            "ost_user": "id INT PRIMARY KEY, name VARCHAR(64)",
-            "ost_staff": "staff_id INT PRIMARY KEY, firstname VARCHAR(64), lastname VARCHAR(64), isactive INT, passwd TEXT",
-            "ost_list_items": "id INT PRIMARY KEY, list_id INT, status INT, value VARCHAR(128)",
-            "ost_thread": "id INT PRIMARY KEY, object_id INT, object_type CHAR(1)",
-            "ost_thread_entry": "id INT PRIMARY KEY, thread_id INT, staff_id INT, user_id INT, type CHAR(1), poster VARCHAR(64), title TEXT, body MEDIUMTEXT, format VARCHAR(16), created DATETIME, updated DATETIME",
-        }
-        for table, columns in definitions.items():
+        for table, columns in TABLES.items():
             cursor.execute(f"CREATE TABLE `{table}` ({columns})")
-        cursor.execute("INSERT INTO ost_ticket_status VALUES (1, 'Abierto', 'open'), (2, 'Resuelto', 'closed')")
-        cursor.execute("INSERT INTO ost_department VALUES (1, 'Soporte')")
-        cursor.execute("INSERT INTO ost_user VALUES (8, 'Cliente Ana'), (9, 'Cliente Dos')")
-        cursor.execute("INSERT INTO ost_staff VALUES (7, 'Ana', 'Pérez', 1, 'never-expose'), (10, 'Luis', 'Prueba', 0, 'never-expose')")
-        companies = [(i, 3, 1, f"Empresa {i:03}") for i in range(1, 151)]
-        companies += [(218, 3, 1, "HOSPICIO"), (219, 3, 1, "Otra empresa"), (300, 9, 1, "HOSPICIO otra lista")]
-        cursor.executemany("INSERT INTO ost_list_items VALUES (%s,%s,%s,%s)", companies)
-        old = [(2000+i, f"{2000+i:08}", 1, 1, 8, 7, datetime(2024, 1, 1)+timedelta(days=i), None, None) for i in range(150)]
-        recent = [
-            (90001, "000001", 2, 1, 9, 10, "2026-11-05 23:59:59", None, "2026-11-06 00:00:01"),
-            (90002, "000002", 2, 1, 9, 10, "2026-11-05 23:59:59", None, None),
-            (90003, "000003", 1, 1, 8, 7, "2026-11-06 00:00:00", None, None),
-            (90004, "000004", 1, 1, 8, 7, "2023-01-01 00:00:00", None, None),
-            (90005, "DUPLICATE", 1, 1, 8, 7, "2025-01-01 00:00:00", None, None),
-            (90006, "DUPLICATE", 1, 1, 8, 7, "2025-01-01 00:00:00", None, None),
-        ]
-        cursor.executemany("INSERT INTO ost_ticket VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)", old+recent)
-        custom = [(row[0], f"Consulta {row[0]}", "218,HOSPICIO", "Diagnóstico", "Solución", "01:30", "never-expose") for row in old]
-        custom += [
-            (90001, "Ticket reciente", "218,HOSPICIO", "Análisis", "Solución", "02:15", "never-expose"),
-            (90002, "Literal _%= prueba", " 218 ,HOSPICIO", None, None, "00:20", "never-expose"),
-            (90003, "Ticket siguiente día", "219,Otra empresa", None, None, None, "never-expose"),
-        ]
-        cursor.executemany("INSERT INTO ost_ticket__cdata VALUES (%s,%s,%s,%s,%s,%s,%s)", custom)
-        cursor.execute("INSERT INTO ost_thread VALUES (50,90002,'T'), (51,90002,'A'), (52,90003,'T'), (60,90001,'T')")
-        entries = [(i, 50, 7, 8, "M", "Cliente", "Mensaje", "x"*5000 if i == 2 else f"Mensaje {i}", "text", None, None) for i in range(1,6)]
-        entries += [(6,51,7,8,"N","Agente","Tarea","NOT A TICKET","text",None,None), (7,52,7,8,"N","Agente","Otro","OTHER TICKET","text",None,None)]
-        entries += [(i,60,7,8,"R","Agente","Respuesta","😀"*4001,"text",None,None) for i in range(100,120)]
-        cursor.executemany("INSERT INTO ost_thread_entry VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", entries)
+        _seed(cursor)
         admin.commit()
-        cursor.execute("CREATE USER %s@'%%' IDENTIFIED BY %s", (reader, "test-only"))
-        cursor.execute(f"GRANT SELECT ON `{schema}`.* TO %s@'%%'", (reader,))
+        cursor.execute(f"CREATE USER {account} IDENTIFIED BY 'test-only'")
+        _grant_policy_columns(cursor, schema, account)
         yield MySQLConfig(host="127.0.0.1", port=port, user=reader, password="test-only", database=schema)
     finally:
         cursor.execute(f"DROP DATABASE IF EXISTS `{schema}`")
-        cursor.execute("DROP USER IF EXISTS %s@'%%'", (reader,))
+        cursor.execute(f"DROP USER IF EXISTS {account}")
         cursor.close()
         admin.close()
 
@@ -87,6 +145,7 @@ def isolated_database():
 @pytest.fixture
 def live(isolated_database, monkeypatch):
     monkeypatch.setattr(MySQLConfig, "from_env", lambda: isolated_database)
+    tickets.clear_schema_cache()
 
 
 def result(encoded):
@@ -95,13 +154,17 @@ def result(encoded):
     return payload["data"]
 
 
+def code(encoded):
+    return json.loads(encoded)["error"]["code"]
+
+
 def test_company_resolution_and_latest_ticket_beyond_first_hundred_rows(live):
     companies = result(tools.find_companies("HOSPICIO"))["rows"]
     assert [c["company_id"] for c in companies] == [218]
     data = result(tools.list_company_tickets(218, limit=1))
     assert data["rows"][0]["ticket_id"] == 90002
+    assert data["rows"][0]["company"] == "HOSPICIO" and data["rows"][0]["company_id"] == 218
     assert data["has_more"] is True and data["next_offset"] == 1
-    assert "overtime" in data["unavailable_fields"]
     assert "never-expose" not in json.dumps(data)
 
 
@@ -122,9 +185,21 @@ def test_full_count_and_paginated_results_agree_without_duplicates(live):
 def test_inclusive_dates_exact_status_and_literal_subject(live):
     filters = dict(company_id=218, staff_id=10, user_id=9, status="Resuelto", created_from="2026-11-05", created_to="2026-11-05")
     assert result(tools.count_tickets(**filters))["total"] == 2
-    assert [r["ticket_id"] for r in result(tools.search_tickets(**filters, order="oldest"))["rows"]] == [90001,90002]
+    assert [r["ticket_id"] for r in result(tools.search_tickets(**filters, order="oldest"))["rows"]] == [90001, 90002]
     assert result(tools.search_tickets(subject="_%="))["rows"][0]["ticket_id"] == 90002
     assert result(tools.count_tickets(subject="' OR 1=1 --"))["total"] == 0
+
+
+def test_state_assignment_overdue_priority_and_closed_filters(live):
+    assert result(tools.count_tickets(state="closed"))["total"] == 2
+    assert result(tools.count_tickets(state="open", overdue=True))["total"] == 1
+    assert result(tools.count_tickets(assigned=False))["total"] == 1
+    assert result(tools.count_tickets(priority_id=3))["total"] == 1
+    assert result(tools.count_tickets(dept_id=2))["total"] == 1
+    assert result(tools.count_tickets(closed_from="2026-11-06", closed_to="2026-11-06"))["total"] == 1
+    assert result(tools.count_tickets(user_id=8))["total"] == 154
+    assert result(tools.count_tickets(user_id=8, include_collaborations=True))["total"] == 155
+    assert result(tools.search_tickets(order="last_updated", limit=1))["rows"][0]["ticket_id"] == 90001
 
 
 def test_exact_detail_handles_absent_cdata_missing_ticket_and_duplicate_numbers(live):
@@ -132,19 +207,70 @@ def test_exact_detail_handles_absent_cdata_missing_ticket_and_duplicate_numbers(
     row = result(tools.get_ticket(ticket_id=90004))["rows"][0]
     assert row["ticket_id"] == 90004 and row["subject"] is None
     assert result(tools.count_tickets())["total"] == 156
-    assert json.loads(tools.get_ticket(ticket_id=999999))["error"]["code"] == "NOT_FOUND"
-    assert json.loads(tools.get_ticket(number="DUPLICATE"))["error"]["code"] == "AMBIGUOUS_MATCH"
+    assert code(tools.get_ticket(ticket_id=999999)) == "NOT_FOUND"
+    assert code(tools.get_ticket(number="DUPLICATE")) == "AMBIGUOUS_MATCH"
+
+
+def test_detail_resolves_labels_people_and_reports_missing_optional_tables(live):
+    data = result(tools.get_ticket(ticket_id=90001))
+    ticket = data["rows"][0]
+    assert ticket["priority"] == "High" and ticket["request_type"] == "Incidente" and ticket["cause"] == "Configuración"
+    assert ticket["help_topic"] == "Incidente" and ticket["customer_email"] == "dos@cliente.test"
+    assert ticket["recorded_time"] == "02:15" and ticket["overtime"] == "0:45"
+    assert ticket["support_staff"] == [{"staff_id": 10, "team_id": None, "name": "Luis Prueba", "slot": 1, "recorded_time": "1:00"}]
+    assert ticket["thread_summary"]["responses"] == 20
+    assert {"sla", "compensated_time", "start_date"}.issubset(data["unavailable_fields"])
+    collaborated = result(tools.get_ticket(ticket_id=90002))["rows"][0]
+    assert collaborated["collaborators"] == [{"user_id": 8, "name": "Cliente Ana", "email": "ana@cliente.test"}]
+    assert "never-expose" not in json.dumps(data)
+
+
+def test_reports_group_on_the_server_and_sum_hhmm_durations(live):
+    agents = result(tools.ticket_report("agent", include_time=True))
+    ana = next(g for g in agents["groups"] if g["key"] == 7)
+    assert ana["label"] == "Ana Pérez" and ana["tickets"] == 153
+    assert ana["recorded_time"] == {"hhmm": "225:00", "hours": 225.0}
+    assert ana["unparsed_time_values"] == 1  # "1.5h" is reported, never guessed
+    assert agents["total_tickets"] == 156
+    months = result(tools.ticket_report("month", created_from="2026-11-01"))
+    assert months["groups"] == [{"key": "2026-11", "label": "2026-11", "tickets": 3}]
+    companies = result(tools.ticket_report("company", limit=1))
+    assert companies["groups"][0]["key"] == 218 and companies["has_more"] is True
+    for group_by in ("status", "state", "department", "priority", "help_topic", "request_type", "source", "user"):
+        assert result(tools.ticket_report(group_by))["total_tickets"] == 156
+
+
+def test_agent_report_counts_workload_activity_and_support_role(live):
+    report = result(tools.get_agent_report(10, date_from="2026-11-01", date_to="2026-11-30"))
+    assert report["agent"]["name"] == "Luis Prueba" and report["agent"]["department"] == "Desarrollo"
+    assert report["assigned_now"]["by_state"] == {"closed": 2}
+    assert report["in_period"]["assigned_tickets_created"] == 2 and report["in_period"]["assigned_tickets_closed"] == 1
+    assert report["support_role"] == {"tickets": 2, "recorded_time": {"hhmm": "1:00", "hours": 1.0}}
+    ana = result(tools.get_agent_report(7, date_from="2026-11-05", date_to="2026-11-05"))
+    assert ana["thread_activity"]["responses"] == 20 and ana["thread_activity"]["internal_notes"] == 1
+    assert ana["assigned_now"]["open_overdue"] == 1
+    assert code(tools.get_agent_report(999)) == "NOT_FOUND"
 
 
 def test_people_resolve_ids_without_exposing_authentication_data(live):
-    assert result(tools.find_agents("Ana"))["rows"] == [{"staff_id":7,"name":"Ana Pérez","isactive":1}]
+    assert result(tools.find_agents("Ana"))["rows"] == [{"staff_id": 7, "name": "Ana Pérez", "isactive": 1, "department": "Soporte"}]
     assert result(tools.find_users("Cliente", limit=1))["next_offset"] == 1
     assert result(tools.find_users("Cliente", limit=1, offset=1))["rows"][0]["user_id"] == 9
-    assert result(tools.count_tickets(staff_id=7))["total"] == 154
+    assert [r["user_id"] for r in result(tools.find_users("personal@correo"))["rows"]] == [8]
+    assert result(tools.count_tickets(staff_id=7))["total"] == 153
     assert result(tools.find_agents("' OR 1=1 --"))["rows"] == []
     companies = result(tools.find_companies("Empresa", limit=50))
     assert companies["has_more"] is True and companies["next_offset"] == 50
     assert result(tools.find_companies("Empresa", offset=50))["rows"][0]["company_id"] == 51
+
+
+def test_user_profile_combines_emails_history_and_collaborations(live):
+    user = result(tools.get_user(8))["rows"][0]
+    assert [e["address"] for e in user["emails"]] == ["ana@cliente.test", "ana.personal@correo.test"]
+    assert user["emails"][0]["is_default"] is True
+    assert user["tickets"]["as_requester"] == 154 and user["tickets"]["as_collaborator"] == 1
+    assert user["tickets"]["latest"]["ticket_id"] == 90003
+    assert {c["company_id"] for c in user["companies"]} == {218, 219}
 
 
 def test_thread_pages_only_include_the_requested_ticket_and_mark_clipped_text(live):
@@ -153,8 +279,18 @@ def test_thread_pages_only_include_the_requested_ticket_and_mark_clipped_text(li
     assert len(first["data"]["rows"][1]["body"]) == 4000
     assert first["data"]["next_after_entry_id"] == 2
     rest = result(tools.get_ticket_thread(90002, after_entry_id=2))
-    assert [r["entry_id"] for r in rest["rows"]] == [3,4,5]
-    assert rest["has_more"] is False
+    assert [r["entry_id"] for r in rest["rows"]] == [3, 4, 5, 8]
+    assert rest["rows"][-1]["body"] == "Revisar servidor" and rest["rows"][-1]["entry_type"] == "internal_note"
+    assert rest["has_more"] is False and rest["entry_counts"]["total"] == 6
+
+
+def test_newest_first_thread_and_type_filter(live):
+    notes = result(tools.get_ticket_thread(90002, entry_types=["internal_note"]))
+    assert [r["entry_id"] for r in notes["rows"]] == [8]
+    latest = result(tools.get_ticket_thread(90002, order="newest", limit=2))
+    assert [r["entry_id"] for r in latest["rows"]] == [8, 5] and latest["next_before_entry_id"] == 5
+    older = result(tools.get_ticket_thread(90002, order="newest", before_entry_id=5, limit=10))
+    assert [r["entry_id"] for r in older["rows"]] == [4, 3, 2, 1]
 
 
 def test_byte_limited_thread_can_be_read_without_skipping_entries(live):
@@ -166,28 +302,54 @@ def test_byte_limited_thread_can_be_read_without_skipping_entries(live):
             break
         assert data["next_after_entry_id"] > cursor
         cursor = data["next_after_entry_id"]
-    assert found == list(range(100,120))
+    assert found == list(range(100, 120))
 
 
-def test_mcp_handlers_work_with_real_sql_and_read_only_sessions(live):
+def test_catalogs_and_missing_catalog_tables(live):
+    statuses = result(tools.list_catalog("statuses"))["rows"]
+    assert {s["name"]: s["state"] for s in statuses} == {"Abierto": "open", "Resuelto": "closed", "Cerrado": "closed"}
+    assert result(tools.list_catalog("priorities"))["rows"][0]["name"] == "High"
+    assert code(tools.list_catalog("slas")) == "SCHEMA_UNAVAILABLE"
+
+
+def test_column_grants_block_secrets_even_for_direct_sql(live):
+    with pytest.raises(mysql.connector.Error) as denied:
+        db.fetch_all("SELECT passwd FROM ost_staff")
+    assert denied.value.errno == 1143  # ER_COLUMNACCESS_DENIED_ERROR
+    hidden = db.fetch_all(
+        "SELECT COLUMN_NAME AS c FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s",
+        ("ost_ticket__cdata",))
+    assert "secret_token" not in {row["c"] for row in hidden}
+
+
+def test_mcp_handlers_work_with_real_sql_and_read_only_sessions(live, monkeypatch):
+    monkeypatch.setenv("MCP_ENABLE_EXPLORATION_TOOLS", "true")
+
     async def flow():
         for name, arguments in [
             ("test_connection", {}), ("list_tables", {}),
-            ("describe_table", {"table_name":"ost_staff"}),
-            ("sample_rows", {"table_name":"ost_staff"}),
-            ("find_companies", {"name":"HOSPICIO"}),
-            ("list_company_tickets", {"company_id":218,"limit":1}),
-            ("search_tickets", {"staff_id":7,"limit":1}),
-            ("count_tickets", {"company_id":218}),
-            ("get_ticket", {"number":"000002"}),
-            ("get_ticket_thread", {"ticket_id":90002,"limit":1}),
-            ("find_agents", {"name":"Ana"}), ("find_users", {"name":"Cliente"}),
+            ("describe_table", {"table_name": "ost_staff"}),
+            ("sample_rows", {"table_name": "ost_staff"}),
+            ("list_catalog", {"kind": "statuses"}),
+            ("find_companies", {"name": "HOSPICIO"}),
+            ("list_company_tickets", {"company_id": 218, "limit": 1}),
+            ("search_tickets", {"staff_id": 7, "limit": 1}),
+            ("count_tickets", {"company_id": 218}),
+            ("ticket_report", {"group_by": "agent", "include_time": True}),
+            ("get_ticket", {"number": "000002"}),
+            ("get_ticket_thread", {"ticket_id": 90002, "limit": 1}),
+            ("find_agents", {"name": "Ana"}), ("get_agent_report", {"staff_id": 7}),
+            ("find_users", {"query": "Cliente"}), ("get_user", {"user_id": 8}),
         ]:
             response = await mcp.call_tool(name, arguments)
-            assert response.isError is False, (name,response.content)
+            assert response.isError is False, (name, response.content)
             assert "never-expose" not in response.content[0].text
     asyncio.run(flow())
-    assert db.fetch_one("SELECT @@session.transaction_read_only AS readonly")["readonly"] == 1
+    connection = json.loads(tools.test_connection())["data"]
+    assert connection["server_time"] and connection["time_zone"]
+    # MariaDB (and MySQL before 8.0.3) name the session flag tx_read_only.
+    variable = "tx_read_only" if "mariadb" in connection["version"].lower() else "transaction_read_only"
+    assert db.fetch_one(f"SELECT @@session.{variable} AS readonly")["readonly"] == 1
     with pytest.raises(mysql.connector.Error):
         db.fetch_all("UPDATE ost_ticket SET number = 'forbidden' WHERE ticket_id = 90001")
     assert result(tools.get_ticket(ticket_id=90001))["rows"][0]["number"] == "000001"

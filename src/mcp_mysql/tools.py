@@ -1,35 +1,43 @@
-#  Implement tools for MySQL operations (read-only) in the MCP server.
-"""MCP tools for MySQL operations (read-only)."""
+"""MCP tools for read-only osTicket queries.
+
+Each tool validates its arguments before any database work and runs all of its
+queries on one read-only connection (see ``db.session``).
+"""
 
 from __future__ import annotations
 
-from pydantic import ValidationError
+from collections.abc import Callable
+
+from pydantic import BaseModel, ValidationError
 
 from mcp_mysql import db, tickets
 from mcp_mysql.access import ALLOWED_TABLE_COLUMNS, get_allowed_columns
-from mcp_mysql.config import MySQLConfig
-from mcp_mysql.errors import AccessDeniedError, ErrorCode
+from mcp_mysql.errors import ErrorCode
 from mcp_mysql.responses import MAX_FIELD_CHARACTERS, encode_response, error_response, exception_response
 from mcp_mysql.validation import (
-    MAX_SAMPLE_ROWS, CompanySearchArguments, CompanyTicketsArguments,
+    MAX_SAMPLE_ROWS, AgentReportArguments, CatalogArguments, CompanySearchArguments, CompanyTicketsArguments,
     PeopleArguments, SearchTicketsArguments, ThreadArguments, TicketArguments, TicketFilters,
+    TicketReportArguments, UserArguments, UserSearchArguments,
 )
-
-
-def _ok(payload: dict, *, is_sample: bool = False) -> str:
-    return encode_response(payload, is_sample=is_sample)
 
 
 def _err(code: ErrorCode, operation: str) -> str:
     return error_response(code, operation=operation)
 
 
-def _require_columns(required: dict[str, tuple[str, ...]]) -> None:
-    """Business queries must obey the same table and column policy as exploration."""
-    for table, columns in required.items():
-        if not set(columns).issubset(get_allowed_columns(table)):
-            raise AccessDeniedError("Business query is outside the access policy")
+def _run(operation: str, model: type[BaseModel], values: dict, function: Callable) -> str:
+    try:
+        arguments = model.model_validate(values)
+    except ValidationError:
+        return _err(ErrorCode.INVALID_ARGUMENTS, operation)
+    try:
+        with db.session():
+            return encode_response(function(arguments))
+    except Exception as exc:
+        return exception_response(exc, operation=operation)
 
+
+# Exploration tools (administrators only; disabled unless MCP_ENABLE_EXPLORATION_TOOLS) ---------
 
 def _describe_allowed_columns(table_name: str) -> list[dict]:
     """Return only approved columns that exist in the configured database."""
@@ -73,12 +81,14 @@ def _sample_projection(metadata: list[dict]) -> tuple[str, tuple]:
 
 
 def test_connection() -> str:
-    """Verify connectivity to MySQL."""
+    """Verify connectivity and report the database clock used to interpret dates."""
     try:
         row = db.fetch_one(
-            "SELECT 1 AS ok, DATABASE() AS `database_name`, VERSION() AS `version`"
+            "SELECT 1 AS ok, DATABASE() AS `database_name`, VERSION() AS `version`, "
+            "NOW() AS `server_time`, @@session.time_zone AS `time_zone`, "
+            "@@system_time_zone AS `system_time_zone`"
         )
-        return _ok({"status": "connected", **(row or {})})
+        return encode_response({"status": "connected", **(row or {})})
     except Exception as exc:
         return exception_response(exc, operation="test_connection")
 
@@ -100,7 +110,7 @@ def list_tables() -> str:
             allowed,
         )
         tables = sorted({row["table_name"] for row in rows if row.get("table_name") in allowed})
-        return _ok({"tables": tables, "count": len(tables)})
+        return encode_response({"tables": tables, "count": len(tables)})
     except Exception as exc:
         return exception_response(exc, operation="list_tables")
 
@@ -111,7 +121,7 @@ def describe_table(table_name: str) -> str:
         rows = _describe_allowed_columns(table_name)
         if not rows:
             return _err(ErrorCode.NO_PERMITTED_COLUMNS, "describe_table")
-        return _ok({"table": table_name, "columns": rows})
+        return encode_response({"table": table_name, "columns": rows})
     except Exception as exc:
         return exception_response(exc, operation="describe_table")
 
@@ -122,105 +132,84 @@ def sample_rows(table_name: str, limit: int = 10) -> str:
         return _err(ErrorCode.INVALID_ARGUMENTS, "sample_rows")
 
     try:
-        metadata = _describe_allowed_columns(table_name)
-        if not metadata:
-            return _err(ErrorCode.NO_PERMITTED_COLUMNS, "sample_rows")
-        columns = [row["Field"] for row in metadata]
-        projection, parameters = _sample_projection(metadata)
-        rows = db.fetch_all(
-            f"SELECT {projection} FROM `{table_name}` LIMIT %s", (*parameters, limit)
-        )
+        with db.session():
+            metadata = _describe_allowed_columns(table_name)
+            if not metadata:
+                return _err(ErrorCode.NO_PERMITTED_COLUMNS, "sample_rows")
+            columns = [row["Field"] for row in metadata]
+            projection, parameters = _sample_projection(metadata)
+            rows = db.fetch_all(
+                f"SELECT {projection} FROM `{table_name}` LIMIT %s", (*parameters, limit)
+            )
         safe_rows = [
             {column: row[column] for column in columns if column in row}
             for row in rows[:limit]
         ]
-        return _ok(
+        return encode_response(
             {"table": table_name, "row_count": len(safe_rows), "rows": safe_rows}, is_sample=True,
         )
     except Exception as exc:
         return exception_response(exc, operation="sample_rows")
 
 
+# Support tools ------------------------------------------------------------------------------
+
+def list_catalog(kind: str) -> str:
+    """List statuses, departments, priorities, help topics, teams or SLAs with their IDs."""
+    return _run("list_catalog", CatalogArguments, locals(), tickets.catalog)
+
+
 def find_companies(name: str, limit: int = 20, offset: int = 0) -> str:
     """Search the company catalog on the server, including entries beyond any sample."""
-    try:
-        arguments = CompanySearchArguments(name=name, limit=limit, offset=offset)
-        _require_columns({"ost_list_items": ("id", "list_id", "value", "status")})
-        catalog = MySQLConfig.from_env().company_list_id
-        # Treat LIKE metacharacters as literal input, using a SQL-mode-independent escape.
-        literal = arguments.name.replace("=", "==").replace("%", "=%").replace("_", "=_")
-        rows = db.fetch_all(
-            """
-            SELECT id AS company_id, LEFT(value, %s) AS name, status
-            FROM ost_list_items
-            WHERE list_id = %s AND value LIKE %s ESCAPE '='
-            ORDER BY (value = %s) DESC, value ASC, id ASC
-            LIMIT %s OFFSET %s
-            """,
-            (MAX_FIELD_CHARACTERS + 1, catalog, f"%{literal}%", arguments.name, arguments.limit + 1, arguments.offset),
-        )
-        return _ok({
-            "query": arguments.name, "company_list_id": catalog,
-            **tickets.page_rows(rows, arguments.limit, arguments.offset),
-        })
-    except ValidationError:
-        return _err(ErrorCode.INVALID_ARGUMENTS, "find_companies")
-    except Exception as exc:
-        return exception_response(exc, operation="find_companies")
+    return _run("find_companies", CompanySearchArguments, locals(), tickets.companies)
 
 
-def _business_call(operation: str, model, values: dict, function) -> str:
-    try:
-        arguments = model.model_validate(values)
-        return _ok(function(arguments))
-    except ValidationError:
-        return _err(ErrorCode.INVALID_ARGUMENTS, operation)
-    except Exception as exc:
-        return exception_response(exc, operation=operation)
-
-
-def list_company_tickets(
-    company_id: int, limit: int = 10, offset: int = 0, order: str = "newest",
-    staff_id: int | None = None, user_id: int | None = None, status: str | None = None,
-    created_from: str | None = None, created_to: str | None = None, subject: str | None = None,
-) -> str:
+def list_company_tickets(company_id: int, **filters) -> str:
     """Search a company's tickets with bounded pagination and explicit filters."""
-    return _business_call("list_company_tickets", CompanyTicketsArguments, locals(), tickets.company_tickets)
+    return _run("list_company_tickets", CompanyTicketsArguments, {"company_id": company_id, **filters},
+                tickets.company_tickets)
 
 
-def search_tickets(
-    company_id: int | None = None, staff_id: int | None = None, user_id: int | None = None,
-    status: str | None = None, created_from: str | None = None, created_to: str | None = None,
-    subject: str | None = None, limit: int = 20, offset: int = 0, order: str = "newest",
-) -> str:
+def search_tickets(**filters) -> str:
     """Search the full ticket set using validated filters, never a sample."""
-    return _business_call("search_tickets", SearchTicketsArguments, locals(), tickets.search)
+    return _run("search_tickets", SearchTicketsArguments, filters, tickets.search)
 
 
-def count_tickets(
-    company_id: int | None = None, staff_id: int | None = None, user_id: int | None = None,
-    status: str | None = None, created_from: str | None = None, created_to: str | None = None,
-    subject: str | None = None,
-) -> str:
+def count_tickets(**filters) -> str:
     """Count all matching tickets on the server, independently of page limits."""
-    return _business_call("count_tickets", TicketFilters, locals(), tickets.count)
+    return _run("count_tickets", TicketFilters, filters, tickets.count)
+
+
+def ticket_report(group_by: str, **filters) -> str:
+    """Count matching tickets grouped by one dimension, optionally with recorded time."""
+    return _run("ticket_report", TicketReportArguments, {"group_by": group_by, **filters}, tickets.report)
 
 
 def get_ticket(ticket_id: int | None = None, number: str | None = None) -> str:
     """Get one ticket by its internal ID or public number (exactly one)."""
-    return _business_call("get_ticket", TicketArguments, locals(), tickets.detail)
+    return _run("get_ticket", TicketArguments, locals(), tickets.detail)
 
 
-def get_ticket_thread(ticket_id: int, after_entry_id: int = 0, limit: int = 20) -> str:
-    """Read a ticket's thread in ascending entry ID order, with a continuation cursor."""
-    return _business_call("get_ticket_thread", ThreadArguments, locals(), tickets.thread)
+def get_ticket_thread(ticket_id: int, **options) -> str:
+    """Read a ticket's thread as plain text, with a continuation cursor."""
+    return _run("get_ticket_thread", ThreadArguments, {"ticket_id": ticket_id, **options}, tickets.thread)
 
 
 def find_agents(name: str, limit: int = 20, offset: int = 0) -> str:
     """Resolve staff IDs by literal full-name substring, without authentication fields."""
-    return _business_call("find_agents", PeopleArguments, locals(), lambda args: tickets.people(args, agents=True))
+    return _run("find_agents", PeopleArguments, locals(), tickets.agents)
 
 
-def find_users(name: str, limit: int = 20, offset: int = 0) -> str:
-    """Resolve customer IDs by literal name substring."""
-    return _business_call("find_users", PeopleArguments, locals(), lambda args: tickets.people(args, agents=False))
+def get_agent_report(staff_id: int, **options) -> str:
+    """Workload, activity and recorded time of one agent."""
+    return _run("get_agent_report", AgentReportArguments, {"staff_id": staff_id, **options}, tickets.agent_report)
+
+
+def find_users(query: str, limit: int = 20, offset: int = 0) -> str:
+    """Resolve customer IDs by literal substring of a name or email address."""
+    return _run("find_users", UserSearchArguments, locals(), tickets.users)
+
+
+def get_user(user_id: int) -> str:
+    """Customer profile: emails, ticket totals, companies and latest ticket."""
+    return _run("get_user", UserArguments, locals(), tickets.user_profile)

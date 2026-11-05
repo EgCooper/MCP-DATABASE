@@ -74,13 +74,16 @@ def test_published_schemas_match_strict_runtime_contract():
     definitions = asyncio.run(mcp.list_tools())
     assert all(tool.outputSchema is None for tool in definitions)
     schemas = {t.name: t.inputSchema for t in definitions}
-    assert len(schemas) == 12
+    assert len(schemas) == 16
     assert all(schema["additionalProperties"] is False for schema in schemas.values())
+    # Several LLM tool APIs reject combinators at the root of an input schema.
+    assert not any({"oneOf", "anyOf", "allOf"} & set(schema) for schema in schemas.values())
+    assert all(schema["type"] == "object" for schema in schemas.values())
     table = schemas["sample_rows"]["properties"]["table_name"]
     assert table["type"] == "string" and table["minLength"] == 1 and table["maxLength"] == 64
     limit = schemas["sample_rows"]["properties"]["limit"]
     assert limit["type"] == "integer" and limit["minimum"] == 1 and limit["maximum"] == 100
-    assert len(schemas["get_ticket"]["oneOf"]) == 2
+    assert set(schemas["get_ticket"]["properties"]) == {"ticket_id", "number"}
 
 
 @pytest.mark.parametrize("limit", [1, 100])

@@ -86,14 +86,14 @@ def test_count_is_not_limited_by_the_sample_or_page_size(database):
 
 
 def test_absent_optional_fields_are_null_and_do_not_break_other_filters(database):
-    database.schema.columns["ost_ticket__cdata"].remove("solucion")
+    database.schema.columns["ost_ticket__cdata"].remove("subject")
     database.schema.columns.pop("ost_staff")
     result = json.loads(tools.search_tickets(staff_id=7))
     assert result["ok"] is True
-    assert {"solution", "assigned_agent"}.issubset(result["data"]["unavailable_fields"])
+    assert {"subject", "assigned_agent"}.issubset(result["data"]["unavailable_fields"])
     query = database.fetch.call_args.args[0]
-    assert "NULL AS `solution`" in query and "NULL AS assigned_agent" in query
-    assert "c.`solucion`" not in query and "JOIN `ost_staff`" not in query
+    assert "NULL AS `subject`" in query and "NULL AS assigned_agent" in query
+    assert "c.`subject`" not in query and "JOIN `ost_staff`" not in query
 
 
 def test_missing_cached_ticket_row_does_not_exclude_ticket_from_general_search(database):

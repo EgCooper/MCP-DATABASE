@@ -20,11 +20,26 @@ _LOGGER = logging.getLogger(__name__)
 class _Changes:
     count: int = 0
     paths: list[str] = field(default_factory=list)
+    seen: set[str] = field(default_factory=set)
 
     def record(self, path: str) -> None:
+        if path in self.seen:
+            return
+        self.seen.add(path)
         self.count += 1
         if len(self.paths) < MAX_TRUNCATION_DETAILS:
             self.paths.append(f"data.{path}")
+
+
+@dataclass(frozen=True)
+class Result:
+    """Tool data plus row cells that were already shortened before formatting.
+
+    ``clipped`` holds (row index, field) pairs, e.g. a message body read with a
+    bounded LEFT() and then converted from HTML, so it may look short but is not complete.
+    """
+    data: dict
+    clipped: tuple[tuple[int, str], ...] = ()
 
 
 def _normalize(value: Any, path: str, changes: _Changes, row_field_limit: int) -> Any:
@@ -88,14 +103,17 @@ def exception_response(exc: Exception, *, operation: str) -> str:
     return error_response(classify_error(exc), operation=operation)
 
 
-def encode_response(payload: dict, *, is_sample: bool = False) -> str:
+def encode_response(payload: dict | Result, *, is_sample: bool = False) -> str:
     """Preserve a complete prefix of items and report field and response clipping.
 
     The byte limit covers the JSON content, before the MCP/HTTP envelope. Large
     first rows receive a smaller cell budget so at least one row can be returned.
     No serialized JSON document is sliced, so every returned response is valid JSON.
     """
-    collection = next((key for key in ("rows", "columns", "tables") if isinstance(payload.get(key), list)), None)
+    clipped: tuple[tuple[int, str], ...] = ()
+    if isinstance(payload, Result):
+        payload, clipped = payload.data, payload.clipped
+    collection = next((key for key in ("rows", "columns", "tables", "groups") if isinstance(payload.get(key), list)), None)
     total = len(payload[collection]) if collection else 0
     reference = uuid4().hex
 
@@ -112,12 +130,22 @@ def encode_response(payload: dict, *, is_sample: bool = False) -> str:
                         capped = next_offset > MAX_OFFSET
                         content["next_offset"] = None if capped else next_offset
                         content["pagination_limit_reached"] = capped
-                    if "next_after_entry_id" in content:
-                        content["next_after_entry_id"] = content["rows"][-1]["entry_id"] if count else None
+                    for cursor in ("next_after_entry_id", "next_before_entry_id"):
+                        if cursor in content:
+                            content[cursor] = content["rows"][-1]["entry_id"] if count else None
             elif collection == "tables":
                 content["count"] = count
+            elif collection == "groups":
+                content["group_count"] = count
+                if count < total and "has_more" in content:
+                    content["has_more"] = True
         changes = _Changes()
         content = _normalize(content, "", changes, field_limit)
+        if collection == "rows":
+            for index, name in clipped:
+                # A cell clipped upstream and again by the cell budget is reported once.
+                if index < count:
+                    changes.record(f"rows[{index}].{name}")
         meta = _meta(reference, is_sample)
         omitted = total - count
         if changes.count or omitted:

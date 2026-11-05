@@ -34,13 +34,38 @@ def column(name):
     }
 
 
+SUPPORT_TOOLS = {
+    "test_connection", "list_catalog", "find_companies", "list_company_tickets",
+    "search_tickets", "count_tickets", "ticket_report", "get_ticket", "get_ticket_thread",
+    "find_agents", "get_agent_report", "find_users", "get_user",
+}
+EXPLORATION = {"list_tables", "describe_table", "sample_rows"}
+
+
 def test_mcp_exposes_exploration_and_controlled_company_queries():
     registered = asyncio.run(mcp.list_tools())
-    assert {tool.name for tool in registered} == {
-        "test_connection", "list_tables", "describe_table", "sample_rows",
-        "find_companies", "list_company_tickets",
-        "search_tickets", "count_tickets", "get_ticket", "get_ticket_thread", "find_agents", "find_users",
-    }
+    assert {tool.name for tool in registered} == SUPPORT_TOOLS | EXPLORATION
+    assert all(tool.annotations.readOnlyHint is True for tool in registered)
+
+
+def test_exploration_tools_are_hidden_and_rejected_unless_enabled(monkeypatch, fetch):
+    monkeypatch.delenv("MCP_ENABLE_EXPLORATION_TOOLS")
+    registered = asyncio.run(mcp.list_tools())
+    assert {tool.name for tool in registered} == SUPPORT_TOOLS
+    for name in EXPLORATION:
+        result = asyncio.run(mcp.call_tool(name, {"table_name": "ost_ticket"} if name != "list_tables" else {}))
+        assert json.loads(result.content[0].text)["error"]["code"] == "UNKNOWN_TOOL"
+    fetch.assert_not_called()
+
+
+@pytest.mark.parametrize("table", ["ost_form_entry", "ost_form_entry_values", "ost_form_field"])
+def test_internal_business_tables_are_never_explorable(fetch, table):
+    for operation in (tools.describe_table, tools.sample_rows):
+        assert json.loads(operation(table))["error"]["code"] == "ACCESS_DENIED"
+    # Even if the database reports the table, the listing only keeps exploration tables.
+    fetch.return_value = [{"table_name": table}, {"table_name": "ost_ticket"}]
+    assert json.loads(tools.list_tables())["data"]["tables"] == ["ost_ticket"]
+    assert table not in fetch.call_args.args[1]
 
 
 def test_list_tables_filters_and_queries_only_authorized_base_tables(fetch):
