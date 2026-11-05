@@ -15,6 +15,9 @@ mcp = FastMCP(
         "\n"
         "Rules:\n"
         "- Use only the available tools; arbitrary SQL is not supported.\n"
+        "- Table and column access is restricted by the server's policy.\n"
+        "- Entidad means the ticket's company: listaEmpresa in ost_ticket__cdata, "
+        "resolved with ost_list_items.\n"
         "- Discover table names with list_tables before inspecting them.\n"
         "- Inspect columns with describe_table before requesting sample rows.\n"
         "- Keep samples small; sample_rows accepts limits from 1 to 100.\n"
@@ -39,14 +42,14 @@ def test_connection() -> str:
 
 @mcp.tool()
 def list_tables() -> str:
-    """List all tables in the configured MySQL database."""
+    """List existing tables permitted by the server's access policy."""
     return tools.list_tables()
 
 
 @mcp.tool()
 def describe_table(table_name: str) -> str:
     """
-    Describe the columns of a MySQL table.
+    Describe only permitted columns of an authorized MySQL table.
 
     Args:
         table_name: Name of the table to inspect.
@@ -57,7 +60,7 @@ def describe_table(table_name: str) -> str:
 @mcp.tool()
 def sample_rows(table_name: str, limit: int = 10) -> str:
     """
-    Return sample rows from a table.
+    Return sample rows containing only permitted columns of an authorized table.
 
     Args:
         table_name: Table name.

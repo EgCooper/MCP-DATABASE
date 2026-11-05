@@ -4,11 +4,9 @@
 from __future__ import annotations
 
 import json
-import re
 
 from mcp_mysql import db
-
-_TABLE_NAME = re.compile(r"^[A-Za-z0-9_]+$")
+from mcp_mysql.access import ALLOWED_TABLE_COLUMNS, get_allowed_columns
 
 
 def _ok(payload: dict) -> str:
@@ -19,10 +17,24 @@ def _err(message: str) -> str:
     return _ok({"error": message})
 
 
-def _validate_table_name(table_name: str) -> str | None:
-    if not _TABLE_NAME.fullmatch(table_name):
-        return "Invalid table name. Use only letters, numbers, and underscores."
-    return None
+def _describe_allowed_columns(table_name: str) -> list[dict]:
+    """Return only approved columns that exist in the configured database."""
+    allowed = get_allowed_columns(table_name)
+    placeholders = ", ".join("%s" for _ in allowed)
+    rows = db.fetch_all(
+        f"""
+        SELECT COLUMN_NAME AS `Field`, COLUMN_TYPE AS `Type`,
+               IS_NULLABLE AS `Null`, COLUMN_KEY AS `Key`,
+               COLUMN_DEFAULT AS `Default`, EXTRA AS `Extra`
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = %s
+          AND COLUMN_NAME IN ({placeholders})
+        ORDER BY ORDINAL_POSITION
+        """,
+        (table_name, *allowed),
+    )
+    return [row for row in rows if row.get("Field") in allowed]
 
 
 def test_connection() -> str:
@@ -37,39 +49,58 @@ def test_connection() -> str:
 
 
 def list_tables() -> str:
-    """List all tables in the configured database."""
-    rows = db.fetch_all("SHOW TABLES")
-    if not rows:
-        return "No tables found."
-    key = next(iter(rows[0].keys()))
-    tables = [row[key] for row in rows]
-    return _ok({"tables": tables, "count": len(tables)})
+    """List existing base tables explicitly allowed by the access policy."""
+    allowed = tuple(sorted(ALLOWED_TABLE_COLUMNS))
+    placeholders = ", ".join("%s" for _ in allowed)
+    try:
+        rows = db.fetch_all(
+            f"""
+            SELECT TABLE_NAME AS table_name
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_TYPE = 'BASE TABLE'
+              AND TABLE_NAME IN ({placeholders})
+            ORDER BY TABLE_NAME
+            """,
+            allowed,
+        )
+        tables = sorted({row["table_name"] for row in rows if row.get("table_name") in allowed})
+        return _ok({"tables": tables, "count": len(tables)})
+    except Exception as exc:
+        return _err(str(exc))
 
 
 def describe_table(table_name: str) -> str:
-    """Return column definitions for a table."""
-    err = _validate_table_name(table_name)
-    if err:
-        return _err(err)
-
-    rows = db.fetch_all(f"DESCRIBE `{table_name}`")
-    if not rows:
-        return _err(f"Table '{table_name}' not found or has no columns.")
-    return _ok({"table": table_name, "columns": rows})
+    """Return only permitted column definitions of an authorized table."""
+    try:
+        rows = _describe_allowed_columns(table_name)
+        if not rows:
+            return _err("No permitted columns are available for this table.")
+        return _ok({"table": table_name, "columns": rows})
+    except Exception as exc:
+        return _err(str(exc))
 
 
 def sample_rows(table_name: str, limit: int = 10) -> str:
-    """Return sample rows from a table (read-only)."""
-    err = _validate_table_name(table_name)
-    if err:
-        return _err(err)
-    if limit < 1 or limit > 100:
+    """Sample only approved, existing columns of an authorized table."""
+    if type(limit) is not int or limit < 1 or limit > 100:
         return _err("limit must be between 1 and 100.")
 
     try:
-        rows = db.fetch_all(f"SELECT * FROM `{table_name}` LIMIT {int(limit)}")
+        metadata = _describe_allowed_columns(table_name)
+        if not metadata:
+            return _err("No permitted columns are available for this table.")
+        columns = [row["Field"] for row in metadata]
+        projection = ", ".join(f"`{column}`" for column in columns)
+        rows = db.fetch_all(
+            f"SELECT {projection} FROM `{table_name}` LIMIT %s", (limit,)
+        )
+        safe_rows = [
+            {column: row[column] for column in columns if column in row}
+            for row in rows[:limit]
+        ]
         return _ok(
-            {"table": table_name, "row_count": len(rows), "rows": rows}
+            {"table": table_name, "row_count": len(safe_rows), "rows": safe_rows}
         )
     except Exception as exc:
         return _err(str(exc))
