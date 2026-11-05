@@ -250,3 +250,67 @@ def test_invalid_internal_limits_fail_before_connecting(connector, limit):
     with pytest.raises(ValueError, match="max_rows"):
         db.fetch_all("SELECT 1", max_rows=limit)
     connector.connect.assert_not_called()
+
+
+def test_session_shares_one_connection_and_transaction_between_queries(connector):
+    connector.cursor.fetchmany.side_effect = [[{"id": 1}], [{"total": 2}]]
+    with db.session():
+        assert db.fetch_all("SELECT id") == [{"id": 1}]
+        assert db.fetch_one("SELECT COUNT(*) AS total") == {"total": 2}
+        connector.connection.close.assert_not_called()
+    connector.connect.assert_called_once()
+    assert connector.cursor.execute.call_count == 2
+    connector.connection.rollback.assert_called_once()
+    connector.connection.close.assert_called_once()
+
+
+def test_session_without_queries_never_connects(connector):
+    with db.session():
+        pass
+    connector.connect.assert_not_called()
+
+
+def test_session_failure_aborts_and_closes_the_shared_connection(connector):
+    connector.cursor.fetchmany.side_effect = [[{"id": 1}], DatabaseError("boom")]
+    with pytest.raises(DatabaseError):
+        with db.session():
+            db.fetch_all("SELECT id")
+            db.fetch_all("SELECT id")
+    connector.connect.assert_called_once()
+    connector.connection.close.assert_called_once()
+
+
+def test_nested_sessions_reuse_the_outer_connection(connector):
+    connector.cursor.fetchmany.side_effect = [[{"id": 1}], [{"id": 2}]]
+    with db.session():
+        db.fetch_all("SELECT 1")
+        with db.session():
+            db.fetch_all("SELECT 2")
+    connector.connect.assert_called_once()
+
+
+def test_connection_slots_are_released_after_each_session(connector, monkeypatch):
+    slots = db.threading.BoundedSemaphore(1)
+    monkeypatch.setattr(db, "_slots", slots)
+    for _ in range(3):
+        connector.connection.cursor.side_effect = [Mock(), connector.cursor]
+        db.fetch_all("SELECT 1")
+    assert slots.acquire(blocking=False)
+
+
+def test_exhausted_connection_slots_time_out_before_connecting(connector, monkeypatch):
+    slots = db.threading.BoundedSemaphore(1)
+    slots.acquire()
+    monkeypatch.setattr(db, "_slots", slots)
+    monkeypatch.setattr(db, "CONNECTION_SLOT_TIMEOUT_SECONDS", 0.01)
+    with pytest.raises(TimeoutError):
+        db.fetch_all("SELECT 1")
+    connector.connect.assert_not_called()
+
+
+def test_tls_options_require_and_verify_the_server_certificate(connector):
+    tls = replace(connector.config, ssl_ca="/etc/ssl/db-ca.pem", ssl_verify_identity=True)
+    db.get_connection(tls)
+    options = connector.connect.call_args.kwargs
+    assert options["ssl_ca"] == "/etc/ssl/db-ca.pem"
+    assert options["ssl_verify_cert"] is True and options["ssl_verify_identity"] is True
