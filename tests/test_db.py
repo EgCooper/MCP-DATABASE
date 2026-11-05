@@ -1,6 +1,8 @@
 """Read-only setup, bounded retrieval and cleanup without a real MySQL server."""
 
 from types import SimpleNamespace
+from dataclasses import replace
+from decimal import Decimal
 from unittest.mock import Mock, call
 
 import pytest
@@ -23,6 +25,7 @@ def connector(monkeypatch):
     cursor = Mock(spec=MySQLCursorDict)
     cursor.fetchmany.return_value = []
     connection = Mock(spec=MySQLConnection)
+    connection.server_info = "8.0.36"
     connection.unread_result = False
     connection.cursor.side_effect = [setup, cursor]
     connect = Mock(return_value=connection)
@@ -67,6 +70,31 @@ def test_connection_options_disable_unsafe_defaults_and_preserve_password(connec
     assert options["allow_local_infile"] is False
     assert -ClientFlag.MULTI_STATEMENTS in options["client_flags"]
     assert -ClientFlag.LOCAL_FILES in options["client_flags"]
+
+
+@pytest.mark.parametrize("version", ["5.5.5-10.3.39-MariaDB", "11.4.2-MariaDB"])
+@pytest.mark.parametrize("milliseconds, seconds", [(15000, "15"), (1, "0.001")])
+def test_mariadb_keeps_readonly_and_converts_timeout_to_seconds(connector, version, milliseconds, seconds):
+    connector.connection.server_info = version
+    db.get_connection(replace(connector.config, query_timeout_ms=milliseconds))
+    assert connector.setup.execute.call_args_list == [
+        call("SET SESSION TRANSACTION READ ONLY"),
+        call("SET SESSION max_statement_time = %s", (Decimal(seconds),)),
+        call("START TRANSACTION READ ONLY"),
+    ]
+    connector.connection.start_transaction.assert_not_called()
+
+
+@pytest.mark.parametrize("stage", ["timeout", "transaction"])
+def test_mariadb_does_not_continue_if_a_protection_fails(connector, stage):
+    connector.connection.server_info = "5.5.5-10.3.39-MariaDB"
+    failure = DatabaseError("Protection failed")
+    connector.setup.execute.side_effect = [None, failure] if stage == "timeout" else [None, None, failure]
+    with pytest.raises(DatabaseError) as caught:
+        db.get_connection(connector.config)
+    assert caught.value is failure
+    connector.connection.close.assert_called_once()
+    connector.cursor.execute.assert_not_called()
 
 
 @pytest.mark.parametrize("stage", ["cursor", "readonly", "timeout", "close", "transaction"])

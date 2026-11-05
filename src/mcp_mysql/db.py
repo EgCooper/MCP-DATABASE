@@ -1,6 +1,7 @@
 """Read-only MySQL sessions with bounded reads and deterministic cleanup."""
 
 from contextlib import contextmanager
+from decimal import Decimal
 from typing import Any, Generator
 
 import mysql.connector
@@ -9,12 +10,9 @@ from mysql.connector.constants import ClientFlag
 from mysql.connector.cursor import MySQLCursorDict
 
 from mcp_mysql.config import MySQLConfig
+from mcp_mysql.errors import ConfigurationError, ResultLimitError
 
 MAX_RESULT_ROWS = 1000
-
-
-class ResultLimitError(ValueError):
-    """The query produced more rows than this operation can return."""
 
 
 def _close_connection(
@@ -60,7 +58,7 @@ def get_connection(config: MySQLConfig | None = None) -> MySQLConnection:
     """Return a connection only after all read-only safeguards are enabled."""
     cfg = config or MySQLConfig.from_env()
     if not cfg.database:
-        raise ValueError("MYSQL_DATABASE is required")
+        raise ConfigurationError("MYSQL_DATABASE is required")
 
     conn = mysql.connector.connect(
         **cfg.as_dict(),
@@ -74,14 +72,28 @@ def get_connection(config: MySQLConfig | None = None) -> MySQLConnection:
     )
     setup_cursor = None
     try:
+        server_info = getattr(conn, "server_info", None)
+        if server_info is None:
+            server_info = conn.get_server_info()
+        if not isinstance(server_info, str):
+            raise ConfigurationError("Cannot determine the database server type")
+        is_mariadb = "mariadb" in server_info.lower()
         setup_cursor = conn.cursor()
         setup_cursor.execute("SET SESSION TRANSACTION READ ONLY")
-        setup_cursor.execute(
-            "SET SESSION MAX_EXECUTION_TIME = %s", (cfg.query_timeout_ms,)
-        )
+        if is_mariadb:
+            setup_cursor.execute(
+                "SET SESSION max_statement_time = %s", (Decimal(cfg.query_timeout_ms) / 1000,)
+            )
+            # MariaDB's 5.5.5 compatibility prefix fails the connector's MySQL version check.
+            setup_cursor.execute("START TRANSACTION READ ONLY")
+        else:
+            setup_cursor.execute(
+                "SET SESSION MAX_EXECUTION_TIME = %s", (cfg.query_timeout_ms,)
+            )
         setup_cursor.close()
         setup_cursor = None
-        conn.start_transaction(readonly=True)
+        if not is_mariadb:
+            conn.start_transaction(readonly=True)
     except BaseException as exc:
         _close_connection(conn, setup_cursor, original_error=exc)
         raise
