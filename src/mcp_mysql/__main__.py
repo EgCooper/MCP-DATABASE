@@ -1,6 +1,6 @@
-"""Run the MySQL MCP service with python -m mcp_mysql."""
+"""Run the MySQL MCP service with python -m mcp_mysql [setup|grants] [options]."""
 
-from mcp_mysql.server import main
+from mcp_mysql.cli import main
 
 
 if __name__ == "__main__":

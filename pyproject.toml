@@ -1,11 +1,13 @@
 [project]
 name = "mcp-database"
 version = "0.1.0"
-description = "MySQL MCP service with Streamable HTTP transport"
+description = "Read-only MCP service for osTicket on MySQL/MariaDB"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "mcp[cli]>=1.10.0,<2.0.0",
+    # FastMCP internals (call_tool override, CallToolResult passthrough) are tested on 1.30.
+    "mcp[cli]>=1.30.0,<2.0.0",
+    "anyio>=4.0.0",
     "mysql-connector-python>=9.2.0",
     "python-dotenv>=1.0.0",
     "pydantic>=2.7.0,<3.0.0",
@@ -17,7 +19,7 @@ dev = [
 ]
 
 [project.scripts]
-mcp-mysql = "mcp_mysql.server:main"
+mcp-mysql = "mcp_mysql.cli:main"
 
 [build-system]
 requires = ["hatchling"]

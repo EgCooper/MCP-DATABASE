@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -32,14 +33,26 @@ def resolve_python(root: Path) -> Path:
             return path
     return Path(sys.executable)
 
+SERVER_ARGS = ["-m", "mcp_mysql", "--transport", "stdio"]
+
+
 # function to build the mysql MCP server entry
 def mysql_server_entry(root: Path, python: Path) -> dict[str, Any]:
-    """Build the mysql MCP server entry (no credentials)."""
+    """Build the mysql MCP server entry (no credentials).
+
+    Clients that launch the process talk over stdio; the server's default
+    transport is HTTP, so the entry must request stdio explicitly.
+    """
     return {
         "command": str(python),
-        "args": ["-m", "mcp_mysql"],
+        "args": list(SERVER_ARGS),
         "cwd": str(root),
     }
+
+
+def claude_code_command(python: Path) -> str:
+    """Claude Code manages its own config; print the registration command instead of editing it."""
+    return " ".join(["claude", "mcp", "add", SERVER_NAME, "-s", "user", "--", shlex.quote(str(python)), *SERVER_ARGS])
 
 # function to build a standalone mcpServers snippet
 def build_snippet(root: Path, python: Path) -> dict[str, Any]:
@@ -142,9 +155,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--client",
-        choices=("cursor", "claude"),
+        choices=("cursor", "claude", "claude-code"),
         default="cursor",
-        help="Target MCP client config (default: cursor).",
+        help="Target MCP client config (default: cursor). 'claude' is Claude Desktop; "
+             "'claude-code' prints the 'claude mcp add' command.",
     )
     parser.add_argument(
         "--path",
@@ -173,6 +187,12 @@ def main(argv: list[str] | None = None) -> None:
 
     for warning in _collect_warnings(root):
         print(f"Warning: {warning}", file=sys.stderr)
+
+    if args.client == "claude-code" and not args.path:
+        print(claude_code_command(python))
+        print("\nRun the command above (use 'claude mcp remove mysql -s user' first to replace "
+              "an existing entry). Credentials stay in .env.", file=sys.stderr)
+        return
 
     if args.print_only:
         print(json.dumps(build_snippet(root, python), indent=2))
