@@ -1,4 +1,4 @@
-# expose tools from mcp_mysql.tools
+# Create the mcp server and publish the tools also configure the transport security settings.
 """MCP MySQL server entrypoint."""
 
 import argparse
@@ -11,28 +11,22 @@ from mcp_mysql import tools
 mcp = FastMCP(
     "mcp-mysql",
     instructions=(
-        "Read-only MySQL MCP for production-safe exploration.\n"
+        "MySQL MCP for exploring the configured database with fixed queries.\n"
         "\n"
         "Rules:\n"
-        "- NEVER attempt writes (INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, "
-        "CREATE, GRANT, etc.). They are blocked and the DB user is read-only.\n"
-        "- Do not invent table or column names. Discover them with tools first.\n"
-        "- Prefer small result sets. Use limits; avoid SELECT * on huge tables.\n"
-        "- One statement only; no multi-statement SQL.\n"
-        "- For support-ticket hours reports (horas, tiempos, horas extra, horas "
-        "compensadas, agentes de apoyo), ALWAYS call report_hours. Never write "
-        "your own query or use execute_query for that report.\n"
+        "- Use only the available tools; arbitrary SQL is not supported.\n"
+        "- Discover table names with list_tables before inspecting them.\n"
+        "- Inspect columns with describe_table before requesting sample rows.\n"
+        "- Keep samples small; sample_rows accepts limits from 1 to 100.\n"
         "\n"
         "Recommended workflow:\n"
-        "1) test_connection if unsure the server is reachable.\n"
-        "2) list_tables / list_views / find_column to locate objects.\n"
-        "3) describe_table, list_indexes, list_foreign_keys before joins.\n"
-        "4) sample_rows or count_rows for a quick look.\n"
-        "5) execute_query only for specific analytical SELECT/SHOW/DESCRIBE/"
-        "EXPLAIN/WITH queries.\n"
+        "1) test_connection to verify connectivity.\n"
+        "2) list_tables to discover available tables.\n"
+        "3) describe_table to inspect a table's columns.\n"
+        "4) sample_rows for a small sample of its data.\n"
         "\n"
-        "When answering, cite the objects and filters you used. "
-        "If a query fails, fix names/types from schema tools instead of guessing."
+        "When answering, identify the table and sample size used. "
+        "Do not present samples as complete results."
     ),
 )
 
@@ -50,12 +44,6 @@ def list_tables() -> str:
 
 
 @mcp.tool()
-def list_views() -> str:
-    """List all views in the configured MySQL database."""
-    return tools.list_views()
-
-
-@mcp.tool()
 def describe_table(table_name: str) -> str:
     """
     Describe the columns of a MySQL table.
@@ -64,39 +52,6 @@ def describe_table(table_name: str) -> str:
         table_name: Name of the table to inspect.
     """
     return tools.describe_table(table_name)
-
-
-@mcp.tool()
-def list_indexes(table_name: str) -> str:
-    """
-    List indexes for a MySQL table.
-
-    Args:
-        table_name: Name of the table.
-    """
-    return tools.list_indexes(table_name)
-
-
-@mcp.tool()
-def list_foreign_keys(table_name: str = "") -> str:
-    """
-    List foreign keys for one table, or all in the current database.
-
-    Args:
-        table_name: Optional table name. Empty = all foreign keys.
-    """
-    return tools.list_foreign_keys(table_name)
-
-
-@mcp.tool()
-def find_column(column_name: str) -> str:
-    """
-    Find tables that contain a column name (supports % wildcards).
-
-    Args:
-        column_name: Exact name or pattern, e.g. customer_id or %email%.
-    """
-    return tools.find_column(column_name)
 
 
 @mcp.tool()
@@ -109,46 +64,6 @@ def sample_rows(table_name: str, limit: int = 10) -> str:
         limit: Max rows (1-100). Default 10.
     """
     return tools.sample_rows(table_name, limit)
-
-
-@mcp.tool()
-def count_rows(table_name: str) -> str:
-    """
-    Count rows in a table.
-
-    Args:
-        table_name: Table name.
-    """
-    return tools.count_rows(table_name)
-
-
-@mcp.tool()
-def execute_query(query: str, limit: int = 100) -> str:
-    """
-    Execute a read-only SQL query (SELECT, SHOW, DESCRIBE, EXPLAIN, WITH).
-
-    Args:
-        query: SQL query to run.
-        limit: Max rows when the query has no LIMIT (1-1000).
-    """
-    return tools.execute_query(query, limit)
-
-
-@mcp.tool()
-def report_hours(desde: str, hasta: str) -> str:
-    """
-    Official support-ticket hours report (osTicket).
-
-    ALWAYS use this tool when asked for ticket hours, times, overtime,
-    compensated hours or support agents. It runs a fixed, validated query
-    from resources/querys/hours.sql. Do NOT build your own query and do NOT
-    use execute_query for this report.
-
-    Args:
-        desde: Start date (ticket creation), format YYYYMMDD, e.g. 20260101.
-        hasta: End date (inclusive), format YYYYMMDD, e.g. 20260826.
-    """
-    return tools.report_hours(desde, hasta)
 
 
 def main() -> None:
