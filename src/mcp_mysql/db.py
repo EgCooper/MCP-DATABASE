@@ -1,53 +1,131 @@
-# Open connection to mysql and run queries
-"""MySQL connection helpers."""
+"""Read-only MySQL sessions with bounded reads and deterministic cleanup."""
 
 from contextlib import contextmanager
 from typing import Any, Generator
 
 import mysql.connector
 from mysql.connector import MySQLConnection
+from mysql.connector.constants import ClientFlag
 from mysql.connector.cursor import MySQLCursorDict
 
 from mcp_mysql.config import MySQLConfig
 
-# function to get a new MySQL connection
+MAX_RESULT_ROWS = 1000
+
+
+class ResultLimitError(ValueError):
+    """The query produced more rows than this operation can return."""
+
+
+def _close_connection(
+    conn: MySQLConnection,
+    cursor: Any = None,
+    *,
+    rollback: bool = False,
+    original_error: BaseException | None = None,
+) -> None:
+    """Attempt all cleanup steps without replacing the operation's error.
+
+    Connector/Python's rollback drains pending rows. Skip it in that case:
+    disconnecting aborts the transaction without reading the remaining data.
+    Automatic result consumption is disabled when the connection is created.
+    """
+    failures: list[BaseException] = []
+    if rollback:
+        try:
+            if not conn.unread_result:
+                conn.rollback()
+        except BaseException as exc:
+            failures.append(exc)
+    if cursor is not None:
+        try:
+            cursor.close()
+        except BaseException as exc:
+            failures.append(exc)
+    try:
+        conn.close()
+    except BaseException as exc:
+        failures.append(exc)
+
+    if failures:
+        if original_error is not None:
+            # Identify cleanup failures without including driver messages or secrets.
+            kinds = ", ".join(type(exc).__name__ for exc in failures)
+            original_error.add_note(f"Database cleanup also failed ({kinds}).")
+        else:
+            raise failures[0]
+
+
 def get_connection(config: MySQLConfig | None = None) -> MySQLConnection:
-    """Open a new MySQL connection."""
+    """Return a connection only after all read-only safeguards are enabled."""
     cfg = config or MySQLConfig.from_env()
     if not cfg.database:
         raise ValueError("MYSQL_DATABASE is required")
 
-    return mysql.connector.connect(**cfg.as_dict())
+    conn = mysql.connector.connect(
+        **cfg.as_dict(),
+        autocommit=False,
+        buffered=False,
+        consume_results=False,
+        # The Python implementation closes unread results without draining them.
+        use_pure=True,
+        allow_local_infile=False,
+        client_flags=[-ClientFlag.MULTI_STATEMENTS, -ClientFlag.LOCAL_FILES],
+    )
+    setup_cursor = None
+    try:
+        setup_cursor = conn.cursor()
+        setup_cursor.execute("SET SESSION TRANSACTION READ ONLY")
+        setup_cursor.execute(
+            "SET SESSION MAX_EXECUTION_TIME = %s", (cfg.query_timeout_ms,)
+        )
+        setup_cursor.close()
+        setup_cursor = None
+        conn.start_transaction(readonly=True)
+    except BaseException as exc:
+        _close_connection(conn, setup_cursor, original_error=exc)
+        raise
+    return conn
 
-# function to yield a dict cursor and close the connection when done
+
 @contextmanager
 def db_cursor(
     config: MySQLConfig | None = None,
 ) -> Generator[MySQLCursorDict, None, None]:
-    """Yield a dict cursor and close the connection when done."""
+    """Yield an unbuffered cursor in a read-only transaction; never commit."""
     conn = get_connection(config)
-    cursor = conn.cursor(dictionary=True)
+    cursor = None
+    original_error = None
     try:
+        cursor = conn.cursor(dictionary=True, buffered=False)
         yield cursor
-        conn.commit()
-    except Exception:
-        conn.rollback()
+        if conn.unread_result:
+            raise RuntimeError("Query results must be fully consumed.")
+    except BaseException as exc:
+        original_error = exc
         raise
     finally:
-        cursor.close()
-        conn.close()
+        _close_connection(conn, cursor, rollback=True, original_error=original_error)
 
-# function to execute a query and return all rows as dictionaries
-def fetch_all(query: str, params: tuple | dict | None = None) -> list[dict[str, Any]]:
-    """Execute a query and return all rows as dictionaries."""
+
+def fetch_all(
+    query: str,
+    params: tuple | dict | None = None,
+    *,
+    max_rows: int = MAX_RESULT_ROWS,
+) -> list[dict[str, Any]]:
+    """Return a bounded result or raise instead of silently truncating it."""
+    if type(max_rows) is not int or not 1 <= max_rows <= MAX_RESULT_ROWS:
+        raise ValueError(f"max_rows must be between 1 and {MAX_RESULT_ROWS}.")
     with db_cursor() as cursor:
-        cursor.execute(query, params or ())
-        rows = cursor.fetchall()
-        return list(rows) if rows else []
+        cursor.execute(query, params if params is not None else ())
+        rows = cursor.fetchmany(max_rows + 1)
+        if len(rows) > max_rows:
+            raise ResultLimitError(f"Query exceeds the maximum of {max_rows} rows.")
+        return list(rows)
 
-# function to execute a query and return a single row
+
 def fetch_one(query: str, params: tuple | dict | None = None) -> dict[str, Any] | None:
-    """Execute a query and return a single row."""
-    with db_cursor() as cursor:
-        cursor.execute(query, params or ())
-        return cursor.fetchone()
+    """Return zero or one row; reject results containing more than one row."""
+    rows = fetch_all(query, params, max_rows=1)
+    return rows[0] if rows else None
