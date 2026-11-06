@@ -184,7 +184,25 @@ https://192.168.100.221 {
 	encode zstd gzip
 	reverse_proxy api:3080
 }
+
+# Descarga del certificado raíz (público) para instalarlo antes de confiar en el HTTPS.
+http://192.168.100.221 {
+	handle /ca.crt {
+		root * /data/caddy/pki/authorities/local
+		rewrite * /root.crt
+		header Content-Type application/x-x509-ca-cert
+		header Content-Disposition "attachment; filename=librechat-ca.crt"
+		file_server
+	}
+	handle {
+		redir https://{host}{uri} permanent
+	}
+}
 ```
+
+El bloque `http://` hace dos cosas:
+- `http://192.168.100.221/ca.crt` descarga el certificado raíz. Siempre se sirve `root.crt` y nada más: no se puede listar la carpeta ni pedir las llaves.
+- Cualquier otra dirección por HTTP redirige a HTTPS.
 
 `/opt/librechat/docker-compose.override.yml`:
 ```yaml
@@ -247,6 +265,11 @@ ss -ltn | grep -E ':(80|443|3000|3080) '
 docker exec caddy wget -qO- http://127.0.0.1:2019/config/ | grep -o '"default_sni":"[^"]*"'
 echo | openssl s_client -connect 192.168.100.221:443 2>/dev/null | grep issuer=
 curl -sSI --cacert /opt/librechat/caddy-root-ca.crt https://192.168.100.221 | head -1   # HTTP/2 200
+
+# descarga del certificado: la huella debe coincidir con la publicada (más abajo)
+curl -sS http://192.168.100.221/ca.crt | openssl x509 -noout -fingerprint -sha1
+curl -sSI http://192.168.100.221/ | grep -i location                                 # redirige a https
+curl -sS -o /dev/null -w "%{http_code}\n" http://192.168.100.221/root.key            # 301, nunca la llave
 ```
 
 Desde otra PC: `https://192.168.100.221` abre LibreChat, y `http://192.168.100.221:3080` y
@@ -255,15 +278,50 @@ Desde otra PC: `https://192.168.100.221` abre LibreChat, y `http://192.168.100.2
 ### Certificado raíz para las PCs
 
 Caddy usa su propia autoridad certificadora (CA) interna. Cada PC debe instalar su
-certificado raíz una sola vez; si no, el navegador muestra "conexión no privada".
+certificado raíz una sola vez; si no, el navegador muestra "conexión no privada". Es válido
+hasta septiembre de 2036.
 
+**Qué es público y qué no:**
+
+| Archivo | ¿Se comparte? |
+|---------|---------------|
+| `root.crt` (`/ca.crt`, `/opt/librechat/caddy-root-ca.crt`) | **Sí**, a todos los usuarios |
+| `root.key`, `intermediate.key` (dentro del volumen `caddy_data`) | **Nunca** |
+| Respaldos de `caddy_data` | **Nunca**: contienen las llaves |
+
+**Cómo repartirlo:**
+1. **Enlace de descarga** (configurado): enviar a cada usuario `http://192.168.100.221/ca.crt`.
+   Al abrirlo se descarga `librechat-ca.crt`. No queda instalado: el usuario debe abrirlo e
+   instalarlo.
+2. **Archivo compartido:** `/opt/librechat/caddy-root-ca.crt`, por carpeta compartida o correo.
+3. **GPO de TI:** se instala en todas las PCs del dominio sin intervención del usuario. Es lo
+   recomendable si son muchas.
+
+**Publica siempre la huella por un canal distinto del archivo**, por ejemplo en un mensaje
+aparte. Si alguien cambiara el archivo en el camino, el usuario confiaría en un impostor; la
+huella permite detectarlo.
+
+| Huella | Valor |
+|--------|-------|
+| SHA-1 (Windows la muestra como "Huella digital") | `1A:E5:D8:99:D1:82:CC:92:13:41:30:18:58:D4:BC:1A:42:F5:48:DB` |
+| SHA-256 | `FA:39:33:56:A1:7C:4C:D0:8B:04:EB:B4:6D:BD:45:EA:0E:E8:2E:DA:D0:DE:AC:A5:42:B9:9E:9B:62:75:67:7E` |
+
+Si la CA se regenera (por ejemplo, porque se perdió `caddy_data`), las huellas cambian.
+Calcúlalas de nuevo con:
 ```bash
 docker compose -p librechat cp caddy:/data/caddy/pki/authorities/local/root.crt /opt/librechat/caddy-root-ca.crt
-sudo chmod 644 /opt/librechat/caddy-root-ca.crt     # es público: es lo que se reparte
+sudo chmod 644 /opt/librechat/caddy-root-ca.crt
+openssl x509 -in /opt/librechat/caddy-root-ca.crt -noout -fingerprint -sha1
+openssl x509 -in /opt/librechat/caddy-root-ca.crt -noout -fingerprint -sha256
 ```
 
+**Verificar la huella antes de instalar:**
+- **Windows:** doble clic en el `.crt` → pestaña **Detalles** → **Huella digital** (SHA-1).
+- **Linux o macOS:** `openssl x509 -in librechat-ca.crt -noout -fingerprint -sha256`.
+
+**Instalar:**
 - **Windows:** doble clic → Instalar certificado → Equipo local → "Entidades de
-  certificación raíz de confianza". TI puede distribuirlo por GPO.
+  certificación raíz de confianza".
 - **Fedora/Linux:** `sudo cp caddy-root-ca.crt /etc/pki/ca-trust/source/anchors/ && sudo update-ca-trust`.
 - **macOS:** Acceso a Llaveros → importar → "Confiar siempre".
 - **Firefox** usa su propio almacén de certificados: activa
