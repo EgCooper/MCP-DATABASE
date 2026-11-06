@@ -353,3 +353,34 @@ def test_mcp_handlers_work_with_real_sql_and_read_only_sessions(live, monkeypatc
     with pytest.raises(mysql.connector.Error):
         db.fetch_all("UPDATE ost_ticket SET number = 'forbidden' WHERE ticket_id = 90001")
     assert result(tools.get_ticket(ticket_id=90001))["rows"][0]["number"] == "000001"
+
+
+def test_pooled_connections_stay_read_only_and_always_see_fresh_data(live, isolated_database, monkeypatch):
+    monkeypatch.setenv("MCP_DB_POOL_SIZE", "2")
+    db.clear_pool()
+    mariadb = "mariadb" in db.fetch_one("SELECT VERSION() AS v")["v"].lower()
+    first = db.fetch_one("SELECT CONNECTION_ID() AS id")["id"]
+    assert db.fetch_one("SELECT CONNECTION_ID() AS id")["id"] == first          # the same session is reused
+    variable = "tx_read_only" if mariadb else "transaction_read_only"
+    assert db.fetch_one(f"SELECT @@session.{variable} AS readonly")["readonly"] == 1
+
+    # Another client commits a change between two pooled calls: the next call must see it,
+    # which proves each call ends its snapshot instead of reusing an old transaction.
+    assert result(tools.list_catalog("teams"))["row_count"] == 1
+    admin = mysql.connector.connect(host="127.0.0.1", port=isolated_database.port, user="root", password="",
+                                    database=isolated_database.database, use_pure=True)
+    try:
+        cursor = admin.cursor()
+        cursor.execute("INSERT INTO ost_team VALUES (99, 'Temporal')")
+        admin.commit()
+        assert result(tools.list_catalog("teams"))["row_count"] == 2
+        assert db.fetch_one("SELECT CONNECTION_ID() AS id")["id"] == first
+    finally:
+        cursor.execute("DELETE FROM ost_team WHERE team_id = 99")
+        admin.commit()
+        admin.close()
+
+    with pytest.raises(mysql.connector.Error):
+        db.fetch_all("UPDATE ost_ticket SET number = 'forbidden' WHERE ticket_id = 90001")
+    assert db.fetch_one("SELECT CONNECTION_ID() AS id")["id"] != first          # a failed session is not reused
+    assert result(tools.get_ticket(ticket_id=90001))["rows"][0]["number"] == "000001"

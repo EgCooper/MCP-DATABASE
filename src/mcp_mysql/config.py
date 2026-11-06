@@ -121,6 +121,23 @@ def max_db_connections() -> int:
     return _positive_int("MCP_MAX_DB_CONNECTIONS", 8)
 
 
+def db_pool_size() -> int:
+    """Idle read-only connections kept for reuse; 0 disables pooling. Never above MCP_MAX_DB_CONNECTIONS."""
+    raw = os.getenv("MCP_DB_POOL_SIZE", "4")
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ConfigurationError("MCP_DB_POOL_SIZE must be a non-negative integer.") from None
+    if value < 0:
+        raise ConfigurationError("MCP_DB_POOL_SIZE must be a non-negative integer.")
+    return min(value, max_db_connections())
+
+
+def db_pool_max_lifetime_seconds() -> int:
+    """Pooled connections are replaced after this age, even if healthy."""
+    return _positive_int("MCP_DB_POOL_MAX_LIFETIME_SECONDS", 1800)
+
+
 MIN_AUTH_TOKEN_LENGTH = 32
 
 

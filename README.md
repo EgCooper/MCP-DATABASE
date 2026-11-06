@@ -104,6 +104,7 @@ Edita `.env`:
 | `OSTICKET_COMPANY_LIST_ID` | Lista de osTicket con las empresas (3 por defecto) |
 | `MYSQL_QUERY_TIMEOUT_MS` | Tiempo máximo por consulta (15000) |
 | `MCP_MAX_DB_CONNECTIONS` | Conexiones simultáneas a la base (8) |
+| `MCP_DB_POOL_SIZE` | Conexiones de solo lectura que se reutilizan entre llamadas (4; `0` lo desactiva) |
 | `MCP_ENABLE_EXPLORATION_TOOLS` | Herramientas de exploración del esquema (`false`) |
 
 ### 3. Levantar el contenedor
@@ -196,7 +197,9 @@ Hoy todos los consumidores comparten un mismo token.
 2. **Consultas fijas y parametrizadas.** Los argumentos se validan de forma estricta antes de
    tocar la base, y los desconocidos se rechazan.
 3. **Sesión de solo lectura:** transacción de solo lectura, sin multi-sentencias ni
-   `LOCAL INFILE`, tiempo máximo por consulta y nunca `COMMIT`.
+   `LOCAL INFILE`, tiempo máximo por consulta y nunca `COMMIT`. Las conexiones reutilizadas
+   conservan esas protecciones. Cada llamada abre una transacción nueva y termina con
+   `ROLLBACK`, y una conexión que tuvo cualquier error se cierra en vez de reutilizarse.
 4. **Permisos por columna en la base**, generados con `grants`.
 5. **Token entre clientes y MCP**, comparado en tiempo constante y nunca registrado. El
    contenedor no publica puertos.

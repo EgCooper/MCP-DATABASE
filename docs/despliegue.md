@@ -115,6 +115,7 @@ datos de clientes.
 | `network librechat_default not found` al levantar el MCP | LibreChat no está levantado | Levantar LibreChat primero (sección 5) |
 | `mcp-osticket` en estado `unhealthy` | El proceso no responde | `docker logs mcp-osticket --tail 50` |
 | Las herramientas responden `DATABASE_UNAVAILABLE` o `DATABASE_TIMEOUT` | No se llega a la base de osTicket | Revisar la red y el Security Group de AWS |
+| Sospecha de un problema con las conexiones reutilizadas | — | Desactivar el pool con `MCP_DB_POOL_SIZE=0` en `.env` y ejecutar `docker compose up -d --wait` (sección 2) |
 | `tlsv1 alert internal error` al entrar por `https://IP` | Falta `default_sni` en el Caddyfile: al entrar por IP no se envía nombre | Agregar la opción global (sección 6) |
 | Caddy responde `config is unchanged` tras editar el Caddyfile | El contenedor ve una versión vieja (montaje de archivo individual) | Montar la carpeta `./caddy:/etc/caddy:ro`, no el archivo |
 | `caddy` en `Restarting` y log `open /etc/caddy/Caddyfile: no such file` | El montaje apunta a una ruta inexistente; Docker crea una carpeta vacía con ese nombre | Corregir el montaje y borrar la carpeta vacía con `sudo rmdir` |
