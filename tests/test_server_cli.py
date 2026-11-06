@@ -139,3 +139,101 @@ def test_grants_reject_names_that_could_inject_sql(options, capsys):
 def test_setup_entry_has_no_credentials(tmp_path):
     entry = setup.mysql_server_entry(tmp_path, Path("/usr/bin/python3"))
     assert set(entry) == {"command", "args", "cwd"}
+
+
+# HTTP gate --------------------------------------------------------------------------------------
+
+import httpx
+
+from mcp_mysql.config import mcp_allowed_hosts, mcp_auth_token
+
+TOKEN = "t" * 40
+
+
+async def _echo_app(scope, receive, send):
+    await send({"type": "http.response.start", "status": 200, "headers": []})
+    await send({"type": "http.response.body", "body": b"reached"})
+
+
+def _request(gate, method="POST", path="/mcp", headers=None):
+    async def call():
+        transport = httpx.ASGITransport(app=gate)
+        async with httpx.AsyncClient(transport=transport, base_url="http://mcp-osticket:8000") as client:
+            return await client.request(method, path, headers=headers or {})
+    return asyncio.run(call())
+
+
+@pytest.mark.parametrize("headers", [
+    {}, {"Authorization": "Bearer wrong"}, {"Authorization": TOKEN}, {"Authorization": f"Basic {TOKEN}"},
+    {"Authorization": f"Bearer {TOKEN}x"}, {"X-Token": TOKEN},
+])
+def test_gate_rejects_missing_or_wrong_tokens_without_logging_them(headers, caplog):
+    with caplog.at_level(logging.WARNING, logger="mcp_mysql.security"):
+        response = _request(server.HttpGate(_echo_app, TOKEN), headers=headers)
+    assert response.status_code == 401 and response.text != "reached"
+    assert response.headers["www-authenticate"].startswith("Bearer")
+    assert "http_unauthorized" in caplog.text and TOKEN not in caplog.text and "wrong" not in caplog.text
+
+
+def test_gate_passes_the_correct_token_through():
+    response = _request(server.HttpGate(_echo_app, TOKEN), headers={"Authorization": f"Bearer {TOKEN}"})
+    assert response.status_code == 200 and response.text == "reached"
+
+
+def test_health_needs_no_token_and_never_reaches_the_mcp_app():
+    gate = server.HttpGate(_echo_app, TOKEN)
+    response = _request(gate, method="GET", path="/health")
+    assert response.status_code == 200 and response.json() == {"status": "ok"}
+    assert _request(gate, method="POST", path="/health").status_code == 405
+
+
+def test_real_mcp_endpoint_requires_the_token():
+    app = server.build_http_app("0.0.0.0", 8000, ["mcp-osticket:*"], TOKEN)
+    response = _request(app, headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "172.17.0.1", "10.0.0.5", "mcp-osticket"])
+def test_non_loopback_http_without_a_token_refuses_to_start(monkeypatch, host):
+    monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
+    run = Mock()
+    monkeypatch.setattr("uvicorn.run", run)
+    with pytest.raises(SystemExit, match="MCP_AUTH_TOKEN is required"):
+        server.main(["--host", host])
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1"])
+def test_loopback_http_may_run_without_a_token(monkeypatch, host):
+    monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
+    run = Mock()
+    monkeypatch.setattr("uvicorn.run", run)
+    server.main(["--host", host, "--port", "8123"])
+    assert run.call_args.kwargs["host"] == host and run.call_args.kwargs["port"] == 8123
+
+
+def test_explicit_opt_out_allows_a_controlled_unauthenticated_test(monkeypatch):
+    monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
+    run = Mock()
+    monkeypatch.setattr("uvicorn.run", run)
+    server.main(["--host", "172.17.0.1", "--allow-unauthenticated"])
+    assert isinstance(run.call_args.args[0], server.HttpGate)
+
+
+@pytest.mark.parametrize("value", ["short", "x" * 31, "x" * 20 + " " + "y" * 20, "ñ" * 40])
+def test_weak_or_malformed_tokens_are_rejected(monkeypatch, value):
+    monkeypatch.setenv("MCP_AUTH_TOKEN", value)
+    with pytest.raises(ValueError, match="MCP_AUTH_TOKEN"):
+        mcp_auth_token()
+
+
+def test_token_and_allowed_hosts_are_read_from_environment(monkeypatch):
+    monkeypatch.setenv("MCP_AUTH_TOKEN", f"  {TOKEN}  ")
+    monkeypatch.setenv("MCP_ALLOWED_HOSTS", "mcp-osticket:*, otro:8000 ,")
+    assert mcp_auth_token() == TOKEN
+    assert mcp_allowed_hosts() == ["mcp-osticket:*", "otro:8000"]
+
+
+def test_image_build_context_excludes_secrets():
+    ignored = Path(__file__).resolve().parents[1].joinpath(".dockerignore").read_text().splitlines()
+    assert ".env" in ignored and ".git" in ignored and ".venv" in ignored

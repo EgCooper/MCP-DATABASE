@@ -2,6 +2,8 @@
 
 import argparse
 from functools import partial
+import hmac
+import ipaddress
 import json
 import logging
 import time
@@ -15,7 +17,7 @@ from mcp.types import Tool as MCPTool
 from pydantic import ValidationError
 
 from mcp_mysql import tools
-from mcp_mysql.config import exploration_tools_enabled
+from mcp_mysql.config import exploration_tools_enabled, mcp_allowed_hosts, mcp_auth_token
 from mcp_mysql.errors import ErrorCode, public_error
 from mcp_mysql.responses import MAX_RESPONSE_BYTES, error_response, exception_response
 from mcp_mysql.validation import EXPLORATION_TOOLS, TOOL_ARGUMENT_MODELS
@@ -251,6 +253,70 @@ if set(TOOL_DESCRIPTIONS) != set(TOOL_ARGUMENT_MODELS):
     raise RuntimeError("Every tool needs both a description and an argument model")
 
 
+_SECURITY = logging.getLogger("mcp_mysql.security")
+HEALTH_PATH = "/health"
+
+
+async def _respond(send, status: int, body: bytes, headers: list[tuple[bytes, bytes]] = ()) -> None:
+    await send({"type": "http.response.start", "status": status,
+                "headers": [(b"content-type", b"application/json"), *headers]})
+    await send({"type": "http.response.body", "body": body})
+
+
+class HttpGate:
+    """ASGI wrapper: an unauthenticated health check, and a bearer token for everything else.
+
+    The token is compared in constant time and never logged.
+    """
+
+    def __init__(self, app, token: str | None) -> None:
+        self.app = app
+        self._expected = f"Bearer {token}".encode() if token else None
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        if scope["path"] == HEALTH_PATH:
+            if scope["method"] in ("GET", "HEAD"):
+                await _respond(send, 200, b'{"status":"ok"}')
+            else:
+                await _respond(send, 405, b'{"error":"method_not_allowed"}')
+            return
+        if self._expected is not None:
+            supplied = b""
+            for name, value in scope.get("headers") or ():
+                if name == b"authorization":
+                    supplied = value
+            if not hmac.compare_digest(supplied, self._expected):
+                client = (scope.get("client") or ("unknown",))[0]
+                _SECURITY.warning("http_unauthorized client=%s path=%s", client, scope["path"][:64])
+                await _respond(send, 401, b'{"error":"unauthorized"}',
+                               [(b"www-authenticate", b'Bearer realm="mcp-osticket"')])
+                return
+        await self.app(scope, receive, send)
+
+
+def _is_loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
+def build_http_app(host: str, port: int, allowed_hosts: list[str], token: str | None):
+    mcp.settings.host = host
+    mcp.settings.port = port
+    # DNS rebinding protection: only localhost and explicitly allowed Host headers.
+    mcp.settings.transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", *allowed_hosts],
+    )
+    return HttpGate(mcp.streamable_http_app(), token)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mcp-mysql",
@@ -267,7 +333,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--allowed-host",
         action="append",
         default=[],
-        help="Extra Host header accepted over HTTP, e.g. host.docker.internal:*",
+        help="Extra Host header accepted over HTTP, e.g. mcp-osticket:* (also MCP_ALLOWED_HOSTS).",
+    )
+    parser.add_argument(
+        "--allow-unauthenticated",
+        action="store_true",
+        help="Permit HTTP on a non-loopback address without MCP_AUTH_TOKEN (controlled local tests only).",
     )
     return parser
 
@@ -275,16 +346,23 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
 
-    if args.transport == "streamable-http":
-        mcp.settings.host = args.host
-        mcp.settings.port = args.port
-        # DNS rebinding protection: only localhost and --allowed-host values.
-        mcp.settings.transport_security = TransportSecuritySettings(
-            enable_dns_rebinding_protection=True,
-            allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", *args.allowed_host],
-        )
+    if args.transport == "stdio":
+        mcp.run(transport="stdio")
+        return
 
-    mcp.run(transport=args.transport)
+    token = mcp_auth_token()
+    if token is None and not _is_loopback(args.host) and not args.allow_unauthenticated:
+        raise SystemExit(
+            "MCP_AUTH_TOKEN is required when listening on a non-loopback address "
+            f"({args.host}). Use --allow-unauthenticated only for a controlled local test."
+        )
+    if token is None:
+        _SECURITY.warning("http_without_authentication host=%s", args.host)
+    app = build_http_app(args.host, args.port, [*args.allowed_host, *mcp_allowed_hosts()], token)
+
+    import uvicorn
+
+    uvicorn.run(app, host=args.host, port=args.port, log_level=mcp.settings.log_level.lower())
 
 
 if __name__ == "__main__":

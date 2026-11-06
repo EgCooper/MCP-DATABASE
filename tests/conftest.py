@@ -14,7 +14,7 @@ def isolated_environment(monkeypatch):
         "MCP_ENABLE_EXPLORATION_TOOLS": "true",
     }.items():
         monkeypatch.setenv(name, value)
-    for name in ("MYSQL_SSL_CA", "MYSQL_SSL_VERIFY_IDENTITY", "MCP_SCHEMA_CACHE_SECONDS", "MYSQL_CONNECT_TIMEOUT",
+    for name in ("MYSQL_SSL_CA", "MYSQL_SSL_VERIFY_IDENTITY", "MCP_SCHEMA_CACHE_SECONDS", "MCP_AUTH_TOKEN", "MCP_ALLOWED_HOSTS", "MYSQL_CONNECT_TIMEOUT",
                  "MYSQL_READ_TIMEOUT", "MYSQL_WRITE_TIMEOUT", "MYSQL_QUERY_TIMEOUT_MS"):
         monkeypatch.delenv(name, raising=False)
     tickets.clear_schema_cache()

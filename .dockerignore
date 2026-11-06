@@ -1,0 +1,17 @@
+# Never send secrets or local state to the image build.
+.env
+.env.*
+!.env.example
+.git
+.venv
+venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+tests
+docs
+*.egg-info
+build
+dist

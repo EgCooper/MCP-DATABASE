@@ -119,3 +119,23 @@ def schema_cache_seconds() -> int:
 
 def max_db_connections() -> int:
     return _positive_int("MCP_MAX_DB_CONNECTIONS", 8)
+
+
+MIN_AUTH_TOKEN_LENGTH = 32
+
+
+def mcp_auth_token() -> str | None:
+    """Shared secret HTTP clients must send as ``Authorization: Bearer <token>``."""
+    value = os.getenv("MCP_AUTH_TOKEN", "").strip()
+    if not value:
+        return None
+    if len(value) < MIN_AUTH_TOKEN_LENGTH or any(ord(char) <= 32 or ord(char) >= 127 for char in value):
+        raise ConfigurationError(
+            f"MCP_AUTH_TOKEN must be at least {MIN_AUTH_TOKEN_LENGTH} printable ASCII characters without spaces."
+        )
+    return value
+
+
+def mcp_allowed_hosts() -> list[str]:
+    """Extra Host headers accepted over HTTP, comma separated (e.g. the container name)."""
+    return [host.strip() for host in os.getenv("MCP_ALLOWED_HOSTS", "").split(",") if host.strip()]

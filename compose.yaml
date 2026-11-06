@@ -1,0 +1,42 @@
+# MCP osTicket next to LibreChat on the same Docker host.
+#
+#   docker compose up -d --build
+#
+# The container joins LibreChat's network and publishes no port: only containers on
+# that network can reach it, at http://mcp-osticket:8000/mcp, and every request needs
+# Authorization: Bearer $MCP_AUTH_TOKEN. Configuration comes from .env (see .env.example).
+name: mcp-osticket
+
+services:
+  mcp-osticket:
+    build: .
+    image: mcp-osticket:latest
+    container_name: mcp-osticket
+    env_file:
+      - path: .env
+        # Pass values verbatim: a password may contain "$".
+        format: raw
+    environment:
+      MCP_ALLOWED_HOSTS: "mcp-osticket:*"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    pids_limit: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    networks:
+      - librechat
+
+networks:
+  librechat:
+    name: ${LIBRECHAT_NETWORK:-librechat_default}
+    external: true
