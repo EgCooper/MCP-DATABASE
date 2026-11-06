@@ -12,15 +12,17 @@ veces repositorios que pertenecen a otro usuario.
 | Copia desplegada del MCP | `/opt/mcp-osticket` | Clon de git del anterior. **No se edita a mano** |
 | LibreChat | `/opt/librechat` | Proyecto compose `librechat` |
 | Contenedor del MCP | `mcp-osticket` | Red `librechat_default`, sin puertos publicados |
-| Contenedor de LibreChat | `LibreChat` | Con mayúsculas: Docker distingue mayúsculas y minúsculas |
+| Contenedor de LibreChat | `LibreChat` | Con mayúsculas: Docker distingue mayúsculas y minúsculas. Solo en `127.0.0.1:3080` |
+| Panel de administración | `admin-panel` | Solo en `127.0.0.1:3000` |
+| Proxy HTTPS | `caddy` | Parte del proyecto `librechat`. Publica 80 y 443. Configuración en `/opt/librechat/caddy/Caddyfile` |
+
+**Dirección para los usuarios:** `https://192.168.100.221`
 
 ```
-~/Documents/MCP-DATABASE ──git commit──▶ rama mysql
-                                            │ git pull
-                                            ▼
-                               /opt/mcp-osticket ──docker compose up --build──▶ contenedor mcp-osticket
-                                                                                     ▲ token
-                               /opt/librechat ──────────────────────────────▶ contenedor LibreChat
+PCs de la red ──HTTPS 443──▶ caddy ──▶ LibreChat (127.0.0.1:3080) ──token──▶ mcp-osticket ──▶ MariaDB osTicket
+                                        admin-panel (127.0.0.1:3000)
+
+~/Documents/MCP-DATABASE ──git commit──▶ rama mysql ──git pull──▶ /opt/mcp-osticket ──docker compose up --build──▶ mcp-osticket
 ```
 
 `/opt/mcp-osticket` trae los cambios desde `~/Documents/MCP-DATABASE`, que es su `origin`.
@@ -113,6 +115,13 @@ datos de clientes.
 | `network librechat_default not found` al levantar el MCP | LibreChat no está levantado | Levantar LibreChat primero (sección 5) |
 | `mcp-osticket` en estado `unhealthy` | El proceso no responde | `docker logs mcp-osticket --tail 50` |
 | Las herramientas responden `DATABASE_UNAVAILABLE` o `DATABASE_TIMEOUT` | No se llega a la base de osTicket | Revisar la red y el Security Group de AWS |
+| `tlsv1 alert internal error` al entrar por `https://IP` | Falta `default_sni` en el Caddyfile: al entrar por IP no se envía nombre | Agregar la opción global (sección 6) |
+| Caddy responde `config is unchanged` tras editar el Caddyfile | El contenedor ve una versión vieja (montaje de archivo individual) | Montar la carpeta `./caddy:/etc/caddy:ro`, no el archivo |
+| `caddy` en `Restarting` y log `open /etc/caddy/Caddyfile: no such file` | El montaje apunta a una ruta inexistente; Docker crea una carpeta vacía con ese nombre | Corregir el montaje y borrar la carpeta vacía con `sudo rmdir` |
+| `curl: (77) error adding trust anchors` | No se puede leer `caddy-root-ca.crt` (dueño `root`, permisos 600) | `sudo chmod 644 /opt/librechat/caddy-root-ca.crt` |
+| El navegador dice "conexión no privada" | La PC no tiene instalado el certificado raíz de Caddy | Instalarlo (sección 6) |
+
+Para diagnosticar con `curl`, usa `-sS` y no `-s`: `-s` solo oculta los errores.
 
 ---
 
@@ -151,7 +160,137 @@ docker restart LibreChat
 
 ---
 
-## 6. Usuarios de LibreChat
+## 6. HTTPS (Caddy) y puertos
+
+Caddy recibe el HTTPS y reenvía a LibreChat por la red interna de Docker. LibreChat y el
+panel de administración solo escuchan en `127.0.0.1`, así que desde la red no se puede
+entrar a ellos sin pasar por Caddy.
+
+Docker publica los puertos por fuera de firewalld, así que **firewalld no sirve para
+cerrarlos**. El cierre real es ligarlos a `127.0.0.1` en el compose.
+
+### Configuración
+
+`/opt/librechat/caddy/Caddyfile`:
+```caddyfile
+{
+	# Al entrar por IP no se envía nombre (SNI): usar este certificado por defecto.
+	default_sni 192.168.100.221
+}
+
+https://192.168.100.221 {
+	tls internal
+	encode zstd gzip
+	reverse_proxy api:3080
+}
+```
+
+`/opt/librechat/docker-compose.override.yml`:
+```yaml
+services:
+  api:
+    image: registry.librechat.ai/librechat-ai/librechat:v0.8.8
+    ports: !override
+      - "127.0.0.1:3080:3080"
+    volumes:
+      - type: bind
+        source: ./librechat.yaml
+        target: /app/librechat.yaml
+
+  admin-panel:
+    ports: !override
+      - "127.0.0.1:3000:3000"
+
+  caddy:
+    image: caddy:2.10
+    container_name: caddy
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy:/etc/caddy:ro        # la carpeta, no el archivo: así se ven los cambios
+      - caddy_data:/data             # contiene la CA interna: no borrar
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
+```
+
+`!override` reemplaza los puertos del `docker-compose.yml` original en vez de sumarles
+los nuevos.
+
+En `/opt/librechat/.env`:
+```dotenv
+DOMAIN_CLIENT=https://192.168.100.221
+DOMAIN_SERVER=https://192.168.100.221
+TRUST_PROXY=1
+```
+
+### Cambiar la configuración de Caddy
+
+```bash
+# editar /opt/librechat/caddy/Caddyfile y aplicar sin reiniciar:
+docker exec caddy caddy reload --config /etc/caddy/Caddyfile
+```
+
+### Verificar
+
+```bash
+ss -ltn | grep -E ':(80|443|3000|3080) '
+# esperado: 80 y 443 en 0.0.0.0; 3000 y 3080 solo en 127.0.0.1
+
+docker exec caddy wget -qO- http://127.0.0.1:2019/config/ | grep -o '"default_sni":"[^"]*"'
+echo | openssl s_client -connect 192.168.100.221:443 2>/dev/null | grep issuer=
+curl -sSI --cacert /opt/librechat/caddy-root-ca.crt https://192.168.100.221 | head -1   # HTTP/2 200
+```
+
+Desde otra PC: `https://192.168.100.221` abre LibreChat, y `http://192.168.100.221:3080` y
+`:3000` no responden.
+
+### Certificado raíz para las PCs
+
+Caddy usa su propia autoridad certificadora (CA) interna. Cada PC debe instalar su
+certificado raíz una sola vez; si no, el navegador muestra "conexión no privada".
+
+```bash
+docker compose -p librechat cp caddy:/data/caddy/pki/authorities/local/root.crt /opt/librechat/caddy-root-ca.crt
+sudo chmod 644 /opt/librechat/caddy-root-ca.crt     # es público: es lo que se reparte
+```
+
+- **Windows:** doble clic → Instalar certificado → Equipo local → "Entidades de
+  certificación raíz de confianza". TI puede distribuirlo por GPO.
+- **Fedora/Linux:** `sudo cp caddy-root-ca.crt /etc/pki/ca-trust/source/anchors/ && sudo update-ca-trust`.
+- **macOS:** Acceso a Llaveros → importar → "Confiar siempre".
+- **Firefox** usa su propio almacén de certificados: activa
+  `security.enterprise_roots.enabled` en `about:config`, o importa el certificado en sus
+  ajustes.
+
+El volumen `caddy_data` guarda la llave de esa CA. **Respáldalo**: si se pierde, Caddy
+crea otra y hay que reinstalar el certificado en todas las PCs.
+
+### Panel de administración
+
+Se abre en el propio servidor, en `http://localhost:3000`. Desde otra PC solo con un túnel SSH:
+```bash
+ssh -L 3000:127.0.0.1:3000 -L 3080:127.0.0.1:3080 vpinto@192.168.100.221
+# y luego abrir http://localhost:3000
+```
+
+### Si se usa un nombre en vez de la IP
+
+Si el DNS de la oficina resuelve un nombre (por ejemplo `librechat.empresa.local`), hay que
+agregarlo al sitio del Caddyfile (`https://192.168.100.221, https://librechat.empresa.local {`)
+y ponerlo en `DOMAIN_CLIENT`/`DOMAIN_SERVER`. Con un nombre, los navegadores sí envían SNI.
+La IP del servidor debe estar reservada en el DHCP: si cambia, el certificado y los enlaces
+dejan de servir.
+
+---
+
+## 7. Usuarios de LibreChat
 
 El registro público está cerrado (`ALLOW_REGISTRATION=false` en `/opt/librechat/.env`). Las
 cuentas las crea el administrador:
@@ -168,11 +307,15 @@ docker exec -it LibreChat npm run delete-user
 
 ---
 
-## 7. Desplegar desde cero en un servidor nuevo
+## 8. Desplegar desde cero en un servidor nuevo
 
 1. Instalar Docker y habilitarlo al arranque: `sudo systemctl enable --now docker`.
-2. LibreChat en `/opt/librechat`, en la versión probada `v0.8.8`, con su `.env` (incluido
-   `MCP_OSTICKET_TOKEN` y `ALLOW_REGISTRATION=false`) y su `librechat.yaml` con este bloque:
+2. LibreChat en `/opt/librechat`, en la versión probada `v0.8.8`, con:
+   - el override y `caddy/Caddyfile` de la sección 6, cambiando la IP por la del servidor
+     nuevo;
+   - su `.env`, con `MCP_OSTICKET_TOKEN`, `ALLOW_REGISTRATION=false`, `DOMAIN_CLIENT`,
+     `DOMAIN_SERVER` y `TRUST_PROXY=1`;
+   - su `librechat.yaml`, con este bloque:
    ```yaml
    mcpSettings:
      allowedAddresses:
@@ -201,14 +344,17 @@ docker exec -it LibreChat npm run delete-user
    cd /opt/mcp-osticket && docker compose up -d --build --wait
    ```
 4. `docker restart LibreChat` y verificar que diga `13 tools` (sección 3).
-5. Permitir la IP del servidor en el Security Group de la base y en la cuenta de MariaDB
-   (`python -m mcp_mysql grants`).
+5. Extraer el certificado raíz de Caddy, instalarlo en las PCs y verificar el HTTPS
+   (sección 6).
+6. Permitir la IP del servidor en el Security Group de la base y en la cuenta de MariaDB
+   (`docker run --rm mcp-osticket:latest grants --database osticket --user ... --host ...`).
 
 ---
 
 ## Pendientes de seguridad de este despliegue
 
-- LibreChat (3080) y su panel de administración (3000) están publicados en `0.0.0.0`.
-  Conviene poner un proxy con HTTPS delante y dejar el panel accesible solo localmente.
 - La conexión a la base de osTicket no va cifrada (TLS desactivado en MariaDB). Está
   reportado al administrador.
+- Reservar en el DHCP la IP `192.168.100.221`, o usar un nombre DNS.
+- Respaldar los volúmenes `caddy_data` (CA interna) y MongoDB (`/opt/librechat/data-node`),
+  y los dos `.env`.
