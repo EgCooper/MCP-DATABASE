@@ -12,11 +12,11 @@ herramienta de SQL libre.
 | Fase | Contenido | Estado |
 |------|-----------|--------|
 | 1. Refinar | Herramientas de soporte, seguridad, pruebas | Completa |
-| 2. Exponer | Despliegue HTTP con autenticación junto a LibreChat | Pendiente |
+| 2. Exponer | Contenedor junto a LibreChat con token | En curso: contenedor y token listos |
 | 3. LibreChat | Configuración del servidor MCP y del agente | Pendiente |
 
-Hasta completar la fase 2, el transporte HTTP **no autentica clientes**. Úsalo solo en
-`127.0.0.1` o en una red controlada.
+Por HTTP, cada petición exige `Authorization: Bearer <MCP_AUTH_TOKEN>`. Sin token, el
+servidor solo arranca en `127.0.0.1`.
 
 ## Instalación
 
@@ -66,8 +66,58 @@ python -m mcp_mysql --host 127.0.0.1 --port 8000
 ```
 
 El transporte por defecto es HTTP. Las entradas de cliente deben pedir `--transport stdio`
-de forma explícita. `--allowed-host` añade nombres aceptados en el encabezado `Host`; protege
-contra DNS rebinding, pero no autentica.
+de forma explícita.
+
+En HTTP:
+- `MCP_AUTH_TOKEN` es obligatorio si el servidor escucha fuera de `127.0.0.1`. La opción
+  `--allow-unauthenticated` lo omite, solo para pruebas controladas.
+- `--allowed-host` o `MCP_ALLOWED_HOSTS` añaden nombres aceptados en el encabezado `Host`.
+  Protegen contra DNS rebinding, pero no autentican.
+- `GET /health` responde sin token, para los chequeos de salud.
+
+### Despliegue con Docker junto a LibreChat
+
+El contenedor se une a la red de LibreChat (`librechat_default`) y **no publica puertos**:
+solo los contenedores de esa red pueden llamarlo, en `http://mcp-osticket:8000/mcp`. Corre
+con un usuario sin privilegios, sistema de archivos de solo lectura, sin *capabilities* y con
+256 MB de memoria. El `.env` no se copia a la imagen: se pasa al arrancar.
+
+1. En `.env` del MCP, además de la conexión a la base, define `MCP_AUTH_TOKEN`:
+   ```bash
+   python -c "import secrets; print(secrets.token_urlsafe(32))"
+   ```
+2. Levanta el contenedor:
+   ```bash
+   docker compose up -d --build
+   docker compose ps                 # debe mostrar "healthy"
+   docker compose logs -f            # líneas tool_call de auditoría
+   ```
+   Si la red de LibreChat tiene otro nombre, defínelo en `LIBRECHAT_NETWORK`.
+3. En `LibreChat/.env`, define `MCP_OSTICKET_TOKEN` con el mismo valor.
+4. En `LibreChat/librechat.yaml`:
+   ```yaml
+   mcpSettings:
+     allowedAddresses:
+       - 'mcp-osticket:8000'      # excepción SSRF solo para este destino privado
+   mcpServers:
+     mysql:
+       type: streamable-http
+       url: http://mcp-osticket:8000/mcp
+       headers:
+         Authorization: "Bearer ${MCP_OSTICKET_TOKEN}"
+       requiresOAuth: false       # token fijo, no OAuth
+       title: osTicket
+       serverInstructions: true
+       timeout: 60000
+   ```
+   `requiresOAuth: false` es necesario. Sin esa línea, LibreChat prueba el servidor sin
+   encabezados, recibe `401 WWW-Authenticate: Bearer` y asume que es OAuth, con lo que la
+   lista de herramientas queda vacía.
+5. Reinicia LibreChat con `docker restart LibreChat`. En sus logs debe aparecer
+   `[MCP] Initialized with 1 configured server and 13 tools`.
+
+Para cambiar el token, actualiza los dos `.env` y ejecuta
+`docker compose up -d` (MCP) y `docker restart LibreChat`.
 
 ### Registrar el MCP en un cliente
 
@@ -152,7 +202,11 @@ Varias capas independientes:
    se rechazan.
 6. **Errores sin filtrar detalles** y **auditoría** de cada llamada en el logger
    `mcp_mysql.audit`: `request_id`, herramienta, resultado y duración, sin argumentos ni datos.
-7. El texto de tickets e hilos se trata como no confiable. Las instrucciones del servidor
+   Los intentos sin token válido se registran como `http_unauthorized`, con la IP de origen.
+7. **Token compartido entre LibreChat y el MCP**, comparado en tiempo constante y nunca
+   registrado. El contenedor no publica puertos. Controlar qué personas usan el MCP le
+   corresponde a LibreChat.
+8. El texto de tickets e hilos se trata como no confiable. Las instrucciones del servidor
    piden al modelo no seguir órdenes que contenga.
 
 Todos los agentes de soporte ven todos los tickets, notas internas incluidas. Se exponen
