@@ -19,9 +19,6 @@ que hable MCP puede consumirlo con el token.
 - **Reportes:** "¿Cuántos tickets abiertos tiene cada agente?", "¿Cuántos cerró María en
   octubre y cuántas horas registró?", "Horas por empresa el mes pasado".
 
-Más ejemplos, con la herramienta que debe usar el modelo, en
-[docs/banco-de-preguntas.md](docs/banco-de-preguntas.md).
-
 ### Herramientas
 
 | Herramienta | Para qué |
@@ -36,7 +33,7 @@ Más ejemplos, con la herramienta que debe usar el modelo, en
 | `get_ticket` | Detalle completo: prioridad, SLA, solicitante, colaboradores, apoyo, horas y resumen del hilo |
 | `get_ticket_thread` | Conversación en texto plano, con mensajes, respuestas y notas internas |
 | `find_agents` | Buscar agentes y obtener su `staff_id` |
-| `get_agent_report` | Carga, actividad, apoyo y horas de un agente en un período |
+| `get_agent_report` | Carga actual, cierres por actor del historial, actividad, apoyo y tiempo acumulado de tickets |
 | `find_users` | Buscar clientes por nombre o correo y obtener su `user_id` |
 | `get_user` | Perfil del cliente: correos, historial, empresas y último ticket |
 
@@ -78,7 +75,7 @@ El MCP genera los permisos por columna que corresponden exactamente a lo que con
 Revísalos y ejecútalos como administrador de la base:
 
 ```bash
-docker run --rm mcp-osticket:latest grants --database osticket --user mcp_readonly --host '<IP del servidor>'
+docker run --rm mcp-osticket:dev grants --database osticket --user mcp_readonly --host '<IP del servidor>'
 ```
 
 `<IP del servidor>` es la IP desde la que el servidor llega a la base. La imagen se construye
@@ -167,6 +164,8 @@ Cualquier cliente MCP en la misma red Docker puede usarlo:
 | Endpoint | `http://mcp-osticket:8000/mcp` |
 | Autenticación | Encabezado `Authorization: Bearer <MCP_AUTH_TOKEN>` en cada petición (sin token o con uno incorrecto: `401`) |
 | Salud | `GET http://mcp-osticket:8000/health`, sin token, responde `{"status":"ok"}` |
+| Disponibilidad de BD | `GET /ready`, con token: 200 listo o 503 con código seguro |
+| Métricas | `GET /metrics`, con token: formato Prometheus, sin argumentos ni datos personales |
 | Red | `librechat_default`. Otro proyecto compose la declara como red `external` |
 | Encabezado `Host` | Solo se aceptan los nombres de `MCP_ALLOWED_HOSTS` (`mcp-osticket:*` en `compose.yaml`) y `localhost`. Si el cliente usa otro nombre o alias, agrégalo ahí |
 
@@ -186,6 +185,8 @@ Todas las herramientas devuelven un único bloque de texto JSON con la misma est
   mientras `has_more` sea `true`.
 - **Campos ausentes:** `unavailable_fields` lista los campos que esta base no tiene, que no es
   lo mismo que estar vacíos.
+- **Horas de reportes:** con `include_time=true`, `time_totals` contiene el total del conjunto
+  filtrado completo, independientemente de la página; no sumar horas decimales redondeadas.
 
 `ticket_report` acepta `limit` (1–100) y `offset` (0–10000). Para completar un reporte,
 mantén los filtros y continúa con el `next_offset` devuelto mientras `has_more` sea `true`.
@@ -204,6 +205,17 @@ sin datos devuelve una lista vacía. Los campos anidados usan rutas como
 `emails.is_default` o `tickets.as_collaborator`.
 
 Hoy todos los consumidores comparten un mismo token.
+
+`get_agent_report.actor_activity.tickets_closed_by_agent` cuenta los tickets cerrados
+por el actor del historial (`uid`/`uid_type`), independientemente del asignado actual.
+`assigned_tickets_created` y `assigned_tickets_closed` conservan su significado de
+asignación actual: no acreditan quién creó o cerró un ticket. El tiempo del ticket es
+acumulado y no demuestra horas trabajadas dentro del período. `metric_definitions`
+explica cada métrica; un historial no disponible devuelve `actor_activity=null`.
+
+`find_agents` tolera espacios repetidos en los nombres y devuelve `resolution`.
+Cuando `must_wait_for_user=true`, el asistente debe pedir una elección antes de
+consultar cifras de un candidato; no debe elegir por el estado activo/inactivo.
 
 ## Seguridad
 
@@ -267,5 +279,6 @@ ejecuta integración en bases desechables MySQL 8.0 y MariaDB 10.3, y publica re
 JUnit. La prueba HTTP simula solamente la respuesta de conexión a la base; la suite
 de integración comprueba el SQL real por separado.
 
-La aceptación de las 30 preguntas con LibreChat y un modelo real tiene un registro
-reproducible y un validador: [docs/aceptacion.md](docs/aceptacion.md).
+Las dependencias están fijadas con hashes en los locks. `compose.yaml` levanta únicamente
+el MCP; las pruebas, la integración de LibreChat y el monitoreo no se despliegan con él.
+Las opciones de TLS, disponibilidad y actualización están en la guía de despliegue.

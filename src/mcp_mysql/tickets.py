@@ -456,8 +456,16 @@ def report(arguments: TicketReportArguments) -> dict:
         f"SELECT {', '.join(columns)} {source} {where} GROUP BY group_key ORDER BY {order} LIMIT %s OFFSET %s",
         (*select_parameters, *source_parameters, *parameters, arguments.limit + 1, arguments.offset),
     )
-    count_source, count_parameters = query.source(needed)
-    total = db.fetch_one(f"SELECT COUNT(*) AS total {count_source} {where}", (*count_parameters, *parameters))
+    total_columns, total_parameters = ["COUNT(*) AS total"], []
+    total_aliases = set(needed)
+    if arguments.include_time:
+        expressions, values = _time_columns(query)
+        total_columns.extend(expressions)
+        total_parameters.extend(values)
+        total_aliases.add("c")
+    count_source, count_parameters = query.source(total_aliases)
+    total = db.fetch_one(f"SELECT {', '.join(total_columns)} {count_source} {where}",
+                         (*total_parameters, *count_parameters, *parameters))
     groups = []
     for row in rows[:arguments.limit]:
         group = {"key": row.get("group_key"),
@@ -475,6 +483,9 @@ def report(arguments: TicketReportArguments) -> dict:
     }
     if company is not None:
         data["company"] = company
+    if arguments.include_time:
+        data["time_totals"] = _time_totals(total) if total is not None else None
+        data["time_totals_scope"] = "all_matching_tickets"
     return data
 
 
@@ -725,14 +736,23 @@ def agents(arguments: PeopleArguments) -> dict:
     if schema.has("ost_staff", "dept_id") and schema.has("ost_department", "id") and schema.has("ost_department", "name"):
         department, join = "LEFT(d.name, %s)", " LEFT JOIN ost_department d ON d.id = a.dept_id"
         parameters.append(TEXT_LIMIT)
-    name = "CONCAT_WS(' ', a.firstname, a.lastname)"
+    name = "CONCAT_WS(' ', NULLIF(TRIM(a.firstname), ''), NULLIF(TRIM(a.lastname), ''))"
+    # Separate token predicates tolerate repeated whitespace in stored names.
+    tokens = arguments.name.split()
+    conditions = " AND ".join(f"{name} LIKE %s ESCAPE '='" for _ in tokens)
     rows = db.fetch_all(
         f"SELECT a.staff_id AS staff_id, LEFT({name}, %s) AS name, {active} AS isactive, {department} AS department "
-        f"FROM ost_staff a{join} WHERE {name} LIKE %s ESCAPE '=' "
+        f"FROM ost_staff a{join} WHERE {conditions} "
         f"ORDER BY {name} ASC, a.staff_id ASC LIMIT %s OFFSET %s",
-        (*parameters, literal_pattern(arguments.name), arguments.limit + 1, arguments.offset),
+        (*parameters, *(literal_pattern(token) for token in tokens), arguments.limit + 1, arguments.offset),
     )
-    return page_rows(rows, arguments.limit, arguments.offset)
+    page = page_rows(rows, arguments.limit, arguments.offset)
+    ambiguous = len(rows) > 1 or arguments.offset > 0
+    return {**page, "resolution": {
+        "status": "ambiguous" if ambiguous else "unique" if rows else "not_found",
+        "next_action": "ask_user_to_choose" if ambiguous else "use_staff_id" if rows else "refine_name",
+        "must_wait_for_user": ambiguous,
+    }}
 
 
 def users(arguments: UserSearchArguments) -> dict:
@@ -873,6 +893,27 @@ def _support_activity(schema: Schema, staff_id: int, filters: TicketFilters, inc
     return result
 
 
+def _actor_closures(schema: Schema, arguments: AgentReportArguments) -> dict | None:
+    required = {"ost_thread_event": ("thread_id", "event_id", "uid", "uid_type", "timestamp", "annulled"),
+                "ost_thread": ("id", "object_id", "object_type"), "ost_event": ("id", "name")}
+    if not all(schema.has(table, column) for table, columns in required.items() for column in columns):
+        return None
+    conditions = ["ev.name = %s", "e.uid_type = %s", "e.uid = %s", "e.annulled = 0"]
+    values = ["closed", "S", arguments.staff_id]
+    for value, condition in ((arguments.date_from, "e.`timestamp` >= %s"),
+                             (arguments.date_to, "e.`timestamp` < %s")):
+        if value:
+            conditions.append(condition)
+            values.append(_next_day(value) if condition.endswith("< %s") else value)
+    row = db.fetch_one(
+        f"""SELECT COUNT(DISTINCT th.object_id) AS tickets_closed_by_agent,
+                   COUNT(*) AS closure_events FROM ost_thread_event e
+            JOIN ost_thread th ON th.id=e.thread_id AND th.object_type='T'
+            JOIN ost_event ev ON ev.id=e.event_id WHERE {' AND '.join(conditions)}""", tuple(values))
+    return {"tickets_closed_by_agent": int((row or {}).get("tickets_closed_by_agent") or 0),
+            "closure_events": int((row or {}).get("closure_events") or 0)}
+
+
 def agent_report(arguments: AgentReportArguments) -> dict:
     schema = _load_schema()
     schema.require("ost_staff", "staff_id", "firstname", "lastname")
@@ -934,6 +975,14 @@ def agent_report(arguments: AgentReportArguments) -> dict:
         "support_role": _support_activity(schema, staff, TicketFilters(created_from=arguments.date_from,
                                                                        created_to=arguments.date_to),
                                           arguments.include_time),
+    }
+    data["actor_activity"] = _actor_closures(schema, arguments)
+    data["unavailable_fields"] = ["actor_activity"] if data["actor_activity"] is None else []
+    data["metric_definitions"] = {
+        "actor_activity": "Distinct tickets closed by this staff actor (event uid, uid_type=S), excluding annulled events; independent of current assignee.",
+        "assigned_tickets_created": "Currently assigned tickets created in the period, not tickets created by this agent.",
+        "assigned_tickets_closed": "Currently assigned tickets whose current closed date is in the period; not closures performed by this agent.",
+        "recorded_time": "Cumulative ticket time for currently assigned tickets created in the period; not hours worked during the period or solely by this agent.",
     }
     if arguments.include_time and schema.has("ost_ticket__cdata", "time"):
         query = TicketQuery(schema, _company_list_id())

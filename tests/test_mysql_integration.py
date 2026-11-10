@@ -21,100 +21,7 @@ from mcp_mysql.server import mcp
 
 pytestmark = pytest.mark.skipif(not os.environ.get("MCP_TEST_MYSQL_PORT"), reason="Requires an explicit disposable MySQL port")
 
-TABLES = {
-    "ost_ticket": "ticket_id INT UNSIGNED PRIMARY KEY, ticket_pid INT UNSIGNED, number VARCHAR(20), user_id INT UNSIGNED, "
-                  "status_id INT UNSIGNED, dept_id INT UNSIGNED, sla_id INT UNSIGNED, topic_id INT UNSIGNED, staff_id INT UNSIGNED, "
-                  "team_id INT UNSIGNED, source ENUM('Web','Email','Phone','API','Other'), isoverdue TINYINT UNSIGNED, "
-                  "isanswered TINYINT UNSIGNED, duedate DATETIME, est_duedate DATETIME, reopened DATETIME, closed DATETIME, "
-                  "lastupdate DATETIME, created DATETIME, updated DATETIME, ip_address VARCHAR(64)",
-    # Optional custom fields horaCompensada, fechaInicio... are deliberately absent; secret_token is unapproved.
-    "ost_ticket__cdata": "ticket_id INT UNSIGNED PRIMARY KEY, priority MEDIUMTEXT, subject MEDIUMTEXT, listaEmpresa MEDIUMTEXT, "
-                         "tipoSolicitud MEDIUMTEXT, causa MEDIUMTEXT, analisis MEDIUMTEXT, solucion MEDIUMTEXT, time MEDIUMTEXT, "
-                         "timeExtra MEDIUMTEXT, apoyo1 MEDIUMTEXT, timeApoyo1 MEDIUMTEXT, apoyo2 MEDIUMTEXT, timeApoyo2 MEDIUMTEXT, "
-                         "apoyo3 MEDIUMTEXT, timeApoyo3 MEDIUMTEXT, secret_token MEDIUMTEXT",
-    "ost_ticket_status": "id INT PRIMARY KEY, name VARCHAR(60), state VARCHAR(16), sort INT UNSIGNED",
-    "ost_ticket_priority": "priority_id TINYINT PRIMARY KEY, priority VARCHAR(60), priority_desc VARCHAR(30), priority_urgency TINYINT UNSIGNED",
-    "ost_department": "id INT UNSIGNED PRIMARY KEY, name VARCHAR(128), signature TEXT",
-    "ost_help_topic": "topic_id INT UNSIGNED PRIMARY KEY, topic VARCHAR(128), dept_id INT UNSIGNED, notes TEXT",
-    "ost_team": "team_id INT UNSIGNED PRIMARY KEY, name VARCHAR(125)",
-    "ost_user": "id INT UNSIGNED PRIMARY KEY, default_email_id INT, status INT UNSIGNED, name VARCHAR(128), created DATETIME, updated DATETIME",
-    "ost_user_email": "id INT UNSIGNED PRIMARY KEY, user_id INT UNSIGNED, flags INT UNSIGNED, address VARCHAR(255)",
-    "ost_staff": "staff_id INT UNSIGNED PRIMARY KEY, dept_id INT UNSIGNED, firstname VARCHAR(32), lastname VARCHAR(32), "
-                 "isactive TINYINT, onvacation TINYINT, passwd VARCHAR(128), email VARCHAR(255)",
-    "ost_list_items": "id INT UNSIGNED PRIMARY KEY, list_id INT, status INT UNSIGNED, value VARCHAR(255), extra VARCHAR(255)",
-    "ost_thread": "id INT UNSIGNED PRIMARY KEY, object_id INT UNSIGNED, object_type CHAR(1), created DATETIME",
-    "ost_thread_entry": "id INT UNSIGNED PRIMARY KEY, thread_id INT UNSIGNED, staff_id INT UNSIGNED, user_id INT UNSIGNED, type CHAR(1), "
-                        "poster VARCHAR(128), title VARCHAR(255), body MEDIUMTEXT, format VARCHAR(16), ip_address VARCHAR(64), "
-                        "created DATETIME, updated DATETIME",
-    "ost_thread_collaborator": "id INT UNSIGNED PRIMARY KEY, flags INT UNSIGNED, thread_id INT UNSIGNED, user_id INT UNSIGNED, role CHAR(1)",
-    "ost_form_field": "id INT UNSIGNED PRIMARY KEY, form_id INT UNSIGNED, name VARCHAR(64), configuration TEXT",
-    "ost_form_entry": "id INT UNSIGNED PRIMARY KEY, form_id INT UNSIGNED, object_id INT UNSIGNED, object_type CHAR(1)",
-    "ost_form_entry_values": "entry_id INT UNSIGNED, field_id INT UNSIGNED, value TEXT, PRIMARY KEY (entry_id, field_id)",
-    # ost_sla is deliberately missing: the detail must report "sla" as unavailable instead of failing.
-}
-
-
-def _insert(cursor, table, rows):
-    placeholders = ", ".join(["%s"] * len(rows[0]))
-    cursor.executemany(f"INSERT INTO `{table}` VALUES ({placeholders})", rows)
-
-
-def _seed(cursor):
-    _insert(cursor, "ost_ticket_status", [(1, "Abierto", "open", 1), (2, "Resuelto", "closed", 2), (3, "Cerrado", "closed", 3)])
-    _insert(cursor, "ost_ticket_priority", [(1, "low", "Low", 4), (2, "normal", "Normal", 3), (3, "high", "High", 2)])
-    _insert(cursor, "ost_department", [(1, "Soporte", "never-expose"), (2, "Desarrollo", "never-expose")])
-    _insert(cursor, "ost_help_topic", [(1, "Incidente", 1, "never-expose")])
-    _insert(cursor, "ost_team", [(1, "Mesa")])
-    _insert(cursor, "ost_user", [(8, 80, 0, "Cliente Ana", None, None), (9, 90, 0, "Cliente Dos", None, None)])
-    _insert(cursor, "ost_user_email", [(80, 8, 0, "ana@cliente.test"), (81, 8, 0, "ana.personal@correo.test"), (90, 9, 0, "dos@cliente.test")])
-    _insert(cursor, "ost_staff", [(7, 1, "Ana", "Pérez", 1, 0, "never-expose", "never-expose@x.test"),
-                                  (10, 2, "Luis", "Prueba", 0, 0, "never-expose", "never-expose@x.test")])
-    items = [(i, 3, 1, f"Empresa {i:03}", None) for i in range(1, 151)]
-    items += [(218, 3, 1, "HOSPICIO", None), (219, 3, 1, "Otra empresa", None), (300, 9, 1, "HOSPICIO otra lista", None),
-              (400, 4, 1, "Incidente", None), (500, 5, 1, "Configuración", None)]
-    _insert(cursor, "ost_list_items", items)
-    columns = "(ticket_id, number, status_id, dept_id, user_id, staff_id, created, lastupdate, closed, topic_id, isoverdue, source)"
-    old = [(2000 + i, f"{2000 + i:08}", 1, 1, 8, 7, datetime(2024, 1, 1) + timedelta(days=i), None, None, 1, 0, "Email") for i in range(150)]
-    recent = [
-        (90001, "000001", 2, 1, 9, 10, "2026-11-05 23:59:59", "2026-11-06 09:00:00", "2026-11-06 00:00:01", 1, 0, "Web"),
-        (90002, "000002", 2, 1, 9, 10, "2026-11-05 23:59:59", "2026-11-05 23:59:59", None, 1, 0, "Web"),
-        (90003, "000003", 1, 2, 8, 7, "2026-11-06 00:00:00", None, None, 1, 1, "Phone"),
-        (90004, "000004", 1, 1, 8, 7, "2023-01-01 00:00:00", None, None, None, 0, "API"),
-        (90005, "DUPLICATE", 1, 1, 8, 7, "2025-01-01 00:00:00", None, None, None, 0, "Web"),
-        (90006, "DUPLICATE", 1, 1, 8, 0, "2025-01-01 00:00:00", None, None, None, 0, "Web"),
-    ]
-    cursor.executemany(f"INSERT INTO ost_ticket {columns} VALUES ({', '.join(['%s'] * 12)})", old + recent)
-    cdata = "(ticket_id, priority, subject, listaEmpresa, tipoSolicitud, causa, analisis, solucion, time, timeExtra, apoyo1, timeApoyo1, secret_token)"
-    custom = [(row[0], "2", f"Consulta {row[0]}", "218,HOSPICIO", "400,Incidente", "500", "Diagnóstico", "Solución", "01:30", None, None, None, "never-expose") for row in old]
-    custom += [
-        (90001, "3", "Ticket reciente", "218,HOSPICIO", "400,Incidente", "500", "Análisis", "Solución", "02:15", "0:45", "Luis Prueba", "1:00", "never-expose"),
-        (90002, "2", "Literal _%= prueba", " 218 ,HOSPICIO", None, None, None, None, "00:20", None, None, None, "never-expose"),
-        (90003, "2", "Ticket siguiente día", "219,Otra empresa", None, None, None, None, "1.5h", None, None, None, "never-expose"),
-    ]
-    cursor.executemany(f"INSERT INTO ost_ticket__cdata {cdata} VALUES ({', '.join(['%s'] * 13)})", custom)
-    _insert(cursor, "ost_thread", [(50, 90002, "T", None), (51, 90002, "A", None), (52, 90003, "T", None), (60, 90001, "T", None)])
-    entries = [(i, 50, 7, 8, "M", "Cliente", "Mensaje", "x" * 5000 if i == 2 else f"Mensaje {i}", "text", "10.0.0.1", None, None) for i in range(1, 6)]
-    entries += [(6, 51, 7, 8, "N", "Agente", "Tarea", "NOT A TICKET", "text", "10.0.0.1", None, None),
-                (7, 52, 7, 8, "N", "Agente", "Otro", "OTHER TICKET", "text", "10.0.0.1", None, None),
-                (8, 50, 7, 0, "N", "Ana Pérez", "Nota", "<p>Revisar <b>servidor</b></p><script>x()</script>", "html", "10.0.0.1",
-                 "2026-11-05 10:00:00", None)]
-    entries += [(i, 60, 7, 8, "R", "Agente", "Respuesta", "😀" * 4001, "text", "10.0.0.1", "2026-11-05 12:00:00", None) for i in range(100, 120)]
-    _insert(cursor, "ost_thread_entry", entries)
-    _insert(cursor, "ost_thread_collaborator", [(1, 0, 50, 8, "M")])
-    _insert(cursor, "ost_form_field", [(1, 2, "apoyo1", "never-expose"), (2, 2, "apoyo2", "never-expose"), (3, 2, "phone", "never-expose")])
-    _insert(cursor, "ost_form_entry", [(1, 2, 90001, "T"), (2, 2, 90003, "T"), (3, 1, 8, "U")])
-    _insert(cursor, "ost_form_entry_values", [(1, 1, '{"s10":"Luis Prueba"}'), (2, 2, '{"s10":"Luis Prueba"}'), (3, 3, "never-expose")])
-
-
-def _grant_policy_columns(cursor, schema, account):
-    """Column-level SELECT on the policy columns that exist in this schema, as `grants` would."""
-    created = {table: {part.split()[0] for part in definition.split(", ") if not part.startswith("PRIMARY")}
-               for table, definition in TABLES.items()}
-    for table, columns in all_query_tables().items():
-        granted = [column for column in columns if column in created.get(table, ())]
-        if granted:
-            listed = ", ".join(f"`{column}`" for column in granted)
-            cursor.execute(f"GRANT SELECT ({listed}) ON `{schema}`.`{table}` TO {account}")
+from mysql_fixture import TABLES, _seed, _grant_policy_columns
 
 
 @pytest.fixture(scope="module")
@@ -134,7 +41,9 @@ def isolated_database():
         admin.commit()
         cursor.execute(f"CREATE USER {account} IDENTIFIED BY 'test-only'")
         _grant_policy_columns(cursor, schema, account)
-        yield MySQLConfig(host="127.0.0.1", port=port, user=reader, password="test-only", database=schema)
+        ca = os.environ.get("MCP_TEST_MYSQL_CA")
+        yield MySQLConfig(host="127.0.0.1", port=port, user=reader, password="test-only", database=schema,
+                          ssl_ca=ca, ssl_verify_identity=bool(ca))
     finally:
         cursor.execute(f"DROP DATABASE IF EXISTS `{schema}`")
         cursor.execute(f"DROP USER IF EXISTS {account}")
@@ -254,6 +163,21 @@ def test_report_continuation_matches_complete_report_including_null_group(live):
     assert collected == complete
 
 
+def test_report_time_totals_cover_filters_not_the_page(live):
+    expected = {'recorded_time': {'hhmm': '227:35', 'hours': 227.58},
+                'overtime': {'hhmm': '0:45', 'hours': 0.75}, 'unparsed_time_values': 1}
+    for offset in (0, 1, 50):
+        page = result(tools.ticket_report('company', include_time=True, limit=1, offset=offset))
+        assert page['time_totals'] == expected
+        assert page['time_totals_scope'] == 'all_matching_tickets'
+    filtered = result(tools.ticket_report('agent', include_time=True, created_from='2026-11-01'))
+    assert filtered['time_totals']['recorded_time']['hhmm'] == '2:35'
+    empty = result(tools.ticket_report('company', include_time=True, subject='NO MATCH IN FIXTURE'))
+    assert empty['time_totals'] == {'recorded_time': {'hhmm': '0:00', 'hours': 0.0},
+                                   'overtime': {'hhmm': '0:00', 'hours': 0.0}, 'unparsed_time_values': 0}
+    assert 'time_totals' not in result(tools.ticket_report('company'))
+
+
 def test_customer_profile_offsets_execute_real_sql(live):
     first = result(tools.get_user(8))["rows"][0]
     second = result(tools.get_user(8, emails_offset=1, companies_offset=1))["rows"][0]
@@ -322,7 +246,10 @@ def test_large_report_and_profile_can_be_read_completely(live, isolated_database
 
 def test_agent_report_counts_workload_activity_and_support_role(live):
     report = result(tools.get_agent_report(10, date_from="2026-11-01", date_to="2026-11-30"))
+    assert report["actor_activity"]["tickets_closed_by_agent"] == 0
     assert report["agent"]["name"] == "Luis Prueba" and report["agent"]["department"] == "Desarrollo"
+
+
     assert report["assigned_now"]["by_state"] == {"closed": 2}
     assert report["in_period"]["assigned_tickets_created"] == 2 and report["in_period"]["assigned_tickets_closed"] == 1
     assert report["support_role"] == {"tickets": 2, "recorded_time": {"hhmm": "1:00", "hours": 1.0}}
@@ -330,6 +257,29 @@ def test_agent_report_counts_workload_activity_and_support_role(live):
     assert ana["thread_activity"]["responses"] == 20 and ana["thread_activity"]["internal_notes"] == 1
     assert ana["assigned_now"]["open_overdue"] == 1
     assert code(tools.get_agent_report(999)) == "NOT_FOUND"
+
+
+def test_closures_follow_actor_not_current_assignment_and_deduplicate(live):
+    actor = result(tools.get_agent_report(7, date_from="2026-11-01", date_to="2026-11-30"))
+    assert actor["actor_activity"] == {"tickets_closed_by_agent": 1, "closure_events": 2}
+    assert actor["in_period"]["assigned_tickets_closed"] == 0
+
+
+def test_tls_verifies_ca_and_hostname_when_fixture_is_configured(live, isolated_database, monkeypatch):
+    if not isolated_database.ssl_ca:
+        pytest.skip("Requires MCP_TEST_MYSQL_CA with ephemeral TLS server")
+    from dataclasses import replace
+    import socket
+    from pathlib import Path
+    assert db.fetch_one("SHOW SESSION STATUS LIKE 'Ssl_cipher'")["Value"]
+    wrong_ca = Path(isolated_database.ssl_ca).with_name('wrong-ca.crt')
+    with pytest.raises(mysql.connector.Error):
+        db.get_connection(replace(isolated_database, ssl_ca=str(wrong_ca)))
+    original = socket.getaddrinfo
+    monkeypatch.setattr(socket, 'getaddrinfo', lambda host,*args,**kwargs:
+        original('127.0.0.1' if host=='wrong-host.invalid' else host,*args,**kwargs))
+    with pytest.raises(mysql.connector.Error):
+        db.get_connection(replace(isolated_database, host='wrong-host.invalid'))
 
 
 def test_people_resolve_ids_without_exposing_authentication_data(live):

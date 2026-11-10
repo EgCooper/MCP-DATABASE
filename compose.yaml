@@ -10,7 +10,7 @@ name: mcp-osticket
 services:
   mcp-osticket:
     build: .
-    image: mcp-osticket:latest
+    image: ${MCP_IMAGE:-mcp-osticket:dev}
     container_name: mcp-osticket
     env_file:
       - path: .env

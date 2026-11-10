@@ -4,6 +4,11 @@ Guía de operación para el servidor donde corren LibreChat y el MCP. Ejecuta lo
 con tu usuario normal, no como `root`: los archivos de `/opt` son tuyos y git rechaza a
 veces repositorios que pertenecen a otro usuario.
 
+Este repositorio publica el servidor MCP, un único `compose.yaml`, sus dependencias y
+sus pruebas. Los informes, evidencias, checklist y entornos auxiliares se conservan
+en `extras/`, una carpeta local excluida de Git y de la imagen Docker. La integración específica de LibreChat/MiniMax se entrega
+como un paquete independiente; actualizar el MCP no modifica la imagen de LibreChat.
+
 ## Cómo está armado
 
 | Qué | Dónde | Notas |
@@ -40,7 +45,7 @@ git add -A && git commit -m "Describe el cambio"
 
 # 2. En el despliegue: traer el commit, reconstruir y esperar a que esté sano
 cd /opt/mcp-osticket
-git pull
+git pull --ff-only
 docker compose up -d --build --wait
 
 # 3. Que LibreChat se reconecte y vuelva a leer las herramientas
@@ -55,6 +60,43 @@ docker logs LibreChat 2>&1 | grep "\[MCP\] Initialized" | tail -1    # debe deci
 - `--wait` no termina hasta que el MCP pasa su chequeo de salud. Así LibreChat nunca intenta
   conectarse antes de tiempo.
 - LibreChat se reinicia **después** del MCP, siempre.
+
+### Integración independiente con LibreChat/MiniMax
+
+Las correcciones de tipos de IDs y salida visible de MiniMax requieren la imagen
+adaptada de LibreChat y `reasoning_split: true`. Su código se conserva en el paquete
+local `extras/.local-artifacts/librechat-p1p2.tar.gz`, excluido del repositorio MCP. Si se
+despliega en otro host, transferir también ese archivo; `git pull` no lo descarga.
+
+Para construir la imagen desde el paquete en este servidor:
+
+```bash
+mkdir -p "$HOME/.local/share/librechat-osticket"
+tar -xzf /home/vpinto/Documents/MCP-DATABASE/extras/.local-artifacts/librechat-p1p2.tar.gz \
+  -C "$HOME/.local/share/librechat-osticket"
+cd "$HOME/.local/share/librechat-osticket/librechat-p1p2"
+docker build -f deploy/librechat/Dockerfile -t librechat:osticket-mcp-adapter .
+```
+
+El paquete contiene las pruebas del adaptador, un fragmento `minimax-profile.yaml`
+y un override de imagen. Fusionar el fragmento con `/opt/librechat/librechat.yaml`,
+conservando tokens y servidores existentes. El perfil se llama **Soporte osTicket**.
+No reemplazar la configuración completa por el fragmento. El adaptador conserva la
+validación del MCP y entrega el texto al finalizar cada llamada del modelo.
+
+Se puede usar el override del paquete junto con los dos Compose actuales de LibreChat:
+
+```bash
+cp compose.override.yaml /opt/librechat/docker-compose.osticket.yml
+docker compose -p librechat \
+  -f /opt/librechat/docker-compose.yml \
+  -f /opt/librechat/docker-compose.override.yml \
+  -f /opt/librechat/docker-compose.osticket.yml \
+  up -d --no-deps --no-build --pull never --wait api
+```
+
+Para conservar esa imagen en futuras actualizaciones, volver a incluir los tres
+archivos. Guardar la imagen y configuración anteriores antes de reemplazarlas.
 
 ---
 
@@ -89,6 +131,28 @@ Para comprobar que coinciden sin mostrar el token, las dos huellas deben ser igu
 grep '^MCP_AUTH_TOKEN='     /opt/mcp-osticket/.env | cut -d= -f2- | sha256sum | cut -c1-12
 grep '^MCP_OSTICKET_TOKEN=' /opt/librechat/.env    | cut -d= -f2- | sha256sum | cut -c1-12
 ```
+
+### TLS hacia MySQL
+
+El MCP acepta `MYSQL_SSL_CA` y `MYSQL_SSL_VERIFY_IDENTITY=true`. En Docker, montar
+la CA verificada como archivo de solo lectura en el servicio `mcp-osticket` del
+único `compose.yaml`, por ejemplo:
+
+```yaml
+volumes:
+  - /ruta/host/mysql-ca.pem:/certs/mysql-ca.pem:ro
+```
+
+Configurar `MYSQL_SSL_CA=/certs/mysql-ca.pem` en `.env`; el UID 10001 del contenedor
+debe poder leer el archivo. El certificado debe corresponder al `MYSQL_HOST` real.
+Después recrear el MCP y comprobar `/ready` y `test_connection`.
+
+### Disponibilidad y métricas
+
+`/health` comprueba que el proceso esté vivo. `/ready` comprueba la conexión de solo
+lectura a la base y requiere el token HTTP; devuelve 200 o 503. `/metrics` también
+requiere token y expone contadores y tiempos sin datos de tickets. Estos endpoints
+pertenecen al MCP y no requieren levantar Prometheus ni otro contenedor.
 
 ---
 

@@ -31,6 +31,12 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
+# Optional tooling, reports, evidence and the separate LibreChat integration.
+/extras/
+# Only the MCP deployment guide is published from docs/.
+/docs/*
+!/docs/despliegue.md
+
 # OS
 .DS_Store
 Thumbs.db

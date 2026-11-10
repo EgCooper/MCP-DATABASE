@@ -9,6 +9,42 @@ permissions:
   contents: read
 
 jobs:
+  tls:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['mysql:8.0', 'mariadb:10.3']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install --require-hashes -r requirements-dev.lock -r requirements-build.lock
+      - run: python -m pip install --no-deps --no-build-isolation -e .
+      - run: python scripts/tls_fixture.py /tmp/mcp-tls
+      - name: Start disposable TLS server
+        env:
+          TEST_IMAGE: ${{ matrix.image }}
+        run: |
+          docker run -d --name mcp-tls -p 127.0.0.1:33071:3306 -e MYSQL_ALLOW_EMPTY_PASSWORD=yes -v /tmp/mcp-tls:/certs:ro "$TEST_IMAGE" --ssl-ca=/certs/ca.crt --ssl-cert=/certs/server.crt --ssl-key=/certs/server.key
+          for attempt in $(seq 1 45); do
+            if docker exec mcp-tls mysqladmin ping -h 127.0.0.1 -u root --silent; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - run: python -m pytest -q tests/test_mysql_integration.py --junitxml=results/tls.xml
+        env:
+          MCP_TEST_MYSQL_PORT: '33071'
+          MCP_TEST_MYSQL_CA: /tmp/mcp-tls/ca.crt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tls-${{ strategy.job-index }}
+          path: results/
+      - if: always()
+        run: docker rm -f mcp-tls
   unit:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -21,7 +57,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m pip install -e '.[dev]'
+      - run: python -m pip install --require-hashes -r requirements-dev.lock -r requirements-build.lock
+      - run: python -m pip install --no-deps --no-build-isolation -e .
       - run: python -m pytest -q --ignore=tests/test_mysql_integration.py --junitxml=results/unit.xml
       - uses: actions/upload-artifact@v4
         if: always()
@@ -53,7 +90,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - run: python -m pip install -e '.[dev]'
+      - run: python -m pip install --require-hashes -r requirements-dev.lock -r requirements-build.lock
+      - run: python -m pip install --no-deps --no-build-isolation -e .
       - run: python -m pytest -q tests/test_mysql_integration.py --junitxml=results/database.xml
         env:
           MCP_TEST_MYSQL_PORT: ${{ job.services.database.ports[3306] }}

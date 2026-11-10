@@ -17,7 +17,8 @@ TableName = Annotated[
 ]
 SampleLimit = Annotated[int, Field(strict=True, ge=1, le=MAX_SAMPLE_ROWS)]
 BusinessLimit = Annotated[int, Field(strict=True, ge=1, le=50)]
-RecordId = Annotated[int, Field(strict=True, ge=1, le=2147483647)]
+RecordId = Annotated[int, Field(strict=True, ge=1, le=2147483647,
+                               description='JSON integer ID, e.g. 3. Never a quoted string like "3"; resolve names first.')]
 # Kept for callers that still import the original name.
 CompanyId = RecordId
 Offset = Annotated[int, Field(strict=True, ge=0, le=MAX_OFFSET)]

@@ -3,6 +3,10 @@
 .env.*
 !.env.example
 .git
+extras
+.agents
+.aws
+.codex
 .venv
 venv
 **/__pycache__
@@ -12,6 +16,8 @@ venv
 .ruff_cache
 tests
 docs
+scripts
+.github
 *.egg-info
 build
 dist
