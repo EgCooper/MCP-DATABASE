@@ -101,7 +101,7 @@ def test_report_limit_reports_more_groups(database):
     database.on("GROUP BY group_key", [{"group_key": i, "label": f"E{i}", "tickets": 10 - i} for i in range(3)])
     result = data(tools.ticket_report("company", limit=2))
     assert result["group_count"] == 2 and result["has_more"] is True
-    assert database.queries("GROUP BY group_key")[0][1][-1] == 3
+    assert database.queries("GROUP BY group_key")[0][1][-2:] == (3, 0)
 
 
 @pytest.mark.parametrize("arguments", [

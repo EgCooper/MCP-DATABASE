@@ -187,6 +187,22 @@ Todas las herramientas devuelven un único bloque de texto JSON con la misma est
 - **Campos ausentes:** `unavailable_fields` lista los campos que esta base no tiene, que no es
   lo mismo que estar vacíos.
 
+`ticket_report` acepta `limit` (1–100) y `offset` (0–10000). Para completar un reporte,
+mantén los filtros y continúa con el `next_offset` devuelto mientras `has_more` sea `true`.
+El offset se ajusta también cuando el límite de bytes reduce la página. Al alcanzar
+`pagination_limit_reached`, reduce el período o los filtros. Los grupos se ordenan por
+cantidad de tickets y luego por clave (los meses por fecha); cambios en la base entre
+llamadas pueden cambiar el orden, por lo que las páginas no constituyen un snapshot.
+
+`get_user` devuelve hasta 20 correos y 10 grupos de empresas por llamada. En la fila del
+perfil, `emails_pagination` y `companies_pagination` indican `has_more`, `next_offset`
+y `pagination_limit_reached`. Para continuar, envía esos offsets como `emails_offset`
+y `companies_offset`; ambas colecciones avanzan de forma independiente. El offset de
+empresas cuenta también el grupo sin empresa, que no se muestra en la lista. Una sección
+no disponible devuelve `null` y aparece en `unavailable_fields`; una sección disponible
+sin datos devuelve una lista vacía. Los campos anidados usan rutas como
+`emails.is_default` o `tickets.as_collaborator`.
+
 Hoy todos los consumidores comparten un mismo token.
 
 ## Seguridad
@@ -244,3 +260,12 @@ docker stop mcp-it
 Están verificadas con MySQL 8.0 y MariaDB 10.3. Para desplegar un cambio: commit aquí, y luego
 `git pull` y `docker compose up -d --build --wait` en `/opt/mcp-osticket`. El detalle está en
 [docs/despliegue.md](docs/despliegue.md).
+
+La configuración de CI en `.github/workflows/tests.yml` ejecuta las pruebas sin base
+en Python 3.11, 3.13 y 3.14, incluida una conexión MCP real por HTTP local. También
+ejecuta integración en bases desechables MySQL 8.0 y MariaDB 10.3, y publica resultados
+JUnit. La prueba HTTP simula solamente la respuesta de conexión a la base; la suite
+de integración comprueba el SQL real por separado.
+
+La aceptación de las 30 preguntas con LibreChat y un modelo real tiene un registro
+reproducible y un validador: [docs/aceptacion.md](docs/aceptacion.md).

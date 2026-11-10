@@ -453,8 +453,8 @@ def report(arguments: TicketReportArguments) -> dict:
     # Months read chronologically; every other dimension is ranked by volume.
     order = "group_key ASC" if arguments.group_by == "month" else "tickets DESC, group_key ASC"
     rows = db.fetch_all(
-        f"SELECT {', '.join(columns)} {source} {where} GROUP BY group_key ORDER BY {order} LIMIT %s",
-        (*select_parameters, *source_parameters, *parameters, arguments.limit + 1),
+        f"SELECT {', '.join(columns)} {source} {where} GROUP BY group_key ORDER BY {order} LIMIT %s OFFSET %s",
+        (*select_parameters, *source_parameters, *parameters, arguments.limit + 1, arguments.offset),
     )
     count_source, count_parameters = query.source(needed)
     total = db.fetch_one(f"SELECT COUNT(*) AS total {count_source} {where}", (*count_parameters, *parameters))
@@ -466,9 +466,10 @@ def report(arguments: TicketReportArguments) -> dict:
         if arguments.include_time:
             group.update(_time_totals(row))
         groups.append(group)
+    page = page_rows(rows, arguments.limit, arguments.offset)
     data = {
         "group_by": arguments.group_by, "groups": groups, "group_count": len(groups),
-        "has_more": len(rows) > arguments.limit,
+        **{key: value for key, value in page.items() if key not in ("rows", "row_count")},
         "total_tickets": int(total["total"]) if total else None,
         "filters": _filters_dump(arguments),
     }
@@ -771,27 +772,57 @@ def user_profile(arguments: UserArguments) -> dict:
     if user is None:
         raise RecordNotFoundError("User not found")
     user = dict(user)
+    unavailable = []
+    for column in ("status", "created", "updated"):
+        if column not in plain:
+            user[column] = None
+            unavailable.append(column)
     default_email = user.pop("default_email_id", None)
-    if schema.has("ost_user_email", "user_id") and schema.has("ost_user_email", "address"):
+    if all(schema.has("ost_user_email", column) for column in ("id", "user_id", "address")):
         addresses = db.fetch_all(
-            "SELECT id, LEFT(address, %s) AS address FROM ost_user_email WHERE user_id = %s ORDER BY id LIMIT 21",
-            (TEXT_LIMIT, arguments.user_id),
+            "SELECT id, LEFT(address, %s) AS address FROM ost_user_email WHERE user_id = %s ORDER BY id LIMIT 21 OFFSET %s",
+            (TEXT_LIMIT, arguments.user_id, arguments.emails_offset),
         )
-        user["emails"] = [{"address": row.get("address"), "is_default": row.get("id") == default_email}
+        default_available = "default_email_id" in plain
+        if not default_available:
+            unavailable.append("emails.is_default")
+        user["emails"] = [{"address": row.get("address"),
+                           "is_default": row.get("id") == default_email if default_available else None}
                           for row in addresses[:20]]
-    by_state = report(TicketReportArguments(group_by="state", user_id=arguments.user_id))
+        page = page_rows(addresses, 20, arguments.emails_offset)
+        user["emails_pagination"] = {key: value for key, value in page.items() if key not in ("rows", "row_count")}
+    else:
+        user["emails"] = None
+        user["emails_pagination"] = None
+        unavailable.append("emails")
+    try:
+        by_state = report(TicketReportArguments(group_by="state", user_id=arguments.user_id))
+        total = by_state["total_tickets"]
+        states = {group["key"] or "unknown": group["tickets"] for group in by_state["groups"]}
+    except SchemaUnavailableError:
+        total = count(TicketFilters(user_id=arguments.user_id))["total"]
+        states = None
+        unavailable.append("tickets.by_state")
     latest = search(SearchTicketsArguments(user_id=arguments.user_id, limit=1))
-    tickets = {"as_requester": by_state["total_tickets"],
-               "by_state": {group["key"] or "unknown": group["tickets"] for group in by_state["groups"]},
+    unavailable.extend(f"tickets.latest.{field}" for field in latest["unavailable_fields"])
+    tickets = {"as_requester": total,
+               "by_state": states,
                "latest": latest["rows"][0] if latest["rows"] else None}
     try:
-        top = report(TicketReportArguments(group_by="company", user_id=arguments.user_id, limit=10))
+        top = report(TicketReportArguments(group_by="company", user_id=arguments.user_id, limit=10,
+                                         offset=arguments.companies_offset))
         # Tickets without a company form a null group; the profile lists real companies only.
         user["companies"] = [{"company_id": g["key"], "name": g["label"], "tickets": g["tickets"]}
                              for g in top["groups"] if g["key"] is not None]
+        # Offset counts report groups, including the group without a company.
+        user["companies_pagination"] = {key: top[key] for key in
+                                       ("limit", "offset", "has_more", "next_offset", "pagination_limit_reached")}
     except SchemaUnavailableError:
         user["companies"] = None
-    if schema.has("ost_thread_collaborator", "user_id") and schema.has("ost_thread", "object_id"):
+        user["companies_pagination"] = None
+        unavailable.append("companies")
+    if (all(schema.has("ost_thread_collaborator", column) for column in ("user_id", "thread_id"))
+            and all(schema.has("ost_thread", column) for column in ("id", "object_id", "object_type"))):
         row = db.fetch_one(
             """SELECT COUNT(DISTINCT th.object_id) AS tickets FROM ost_thread_collaborator tc
                JOIN ost_thread th ON th.id = tc.thread_id
@@ -799,8 +830,11 @@ def user_profile(arguments: UserArguments) -> dict:
             (arguments.user_id,),
         )
         tickets["as_collaborator"] = int(row["tickets"]) if row else 0
+    else:
+        tickets["as_collaborator"] = None
+        unavailable.append("tickets.as_collaborator")
     user["tickets"] = tickets
-    return {"rows": [user], "row_count": 1}
+    return {"rows": [user], "row_count": 1, "unavailable_fields": unavailable}
 
 
 def _support_activity(schema: Schema, staff_id: int, filters: TicketFilters, include_time: bool) -> dict | None:

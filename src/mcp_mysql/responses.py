@@ -139,6 +139,11 @@ def encode_response(payload: dict | Result, *, is_sample: bool = False) -> str:
                 content["group_count"] = count
                 if count < total and "has_more" in content:
                     content["has_more"] = True
+                    if "next_offset" in content:
+                        next_offset = content.get("offset", 0) + count
+                        capped = next_offset > MAX_OFFSET
+                        content["next_offset"] = None if capped else next_offset
+                        content["pagination_limit_reached"] = capped
         changes = _Changes()
         content = _normalize(content, "", changes, field_limit)
         if collection == "rows":

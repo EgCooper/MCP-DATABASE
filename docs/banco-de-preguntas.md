@@ -8,6 +8,10 @@ Llena esa columna consultando osTicket directamente, con valores concretos (núm
 ticket, total, nombre). Una diferencia indica un problema del modelo, de las instrucciones
 o de una herramienta.
 
+Para registrar versión, modelo, dataset, fecha, llamadas y evidencias de los 30 casos,
+seguir [el procedimiento de aceptación](aceptacion.md). El generador crea todos los
+casos como pendientes y el validador puede exigir 30 aprobaciones documentadas.
+
 ## Tickets
 
 | # | Pregunta | Herramientas esperadas | Respuesta verificada |

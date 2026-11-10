@@ -240,6 +240,86 @@ def test_reports_group_on_the_server_and_sum_hhmm_durations(live):
         assert result(tools.ticket_report(group_by))["total_tickets"] == 156
 
 
+def test_report_continuation_matches_complete_report_including_null_group(live):
+    complete = result(tools.ticket_report("company", include_time=True))["groups"]
+    collected, offset = [], 0
+    while True:
+        page = result(tools.ticket_report("company", include_time=True, limit=1, offset=offset))
+        collected.extend(page["groups"])
+        if not page["has_more"]:
+            assert page["next_offset"] is None
+            break
+        assert page["next_offset"] > offset
+        offset = page["next_offset"]
+    assert collected == complete
+
+
+def test_customer_profile_offsets_execute_real_sql(live):
+    first = result(tools.get_user(8))["rows"][0]
+    second = result(tools.get_user(8, emails_offset=1, companies_offset=1))["rows"][0]
+    assert second["emails"] == first["emails"][1:]
+    company_page = result(tools.ticket_report("company", user_id=8, limit=10, offset=1))
+    assert second["companies"] == [
+        {"company_id": g["key"], "name": g["label"], "tickets": g["tickets"]}
+        for g in company_page["groups"] if g["key"] is not None]
+    assert second["emails_pagination"]["offset"] == second["companies_pagination"]["offset"] == 1
+
+
+def test_large_report_and_profile_can_be_read_completely(live, isolated_database):
+    """Real SQL must recover >100 groups, >20 emails and >10 companies without duplicates."""
+    admin = mysql.connector.connect(host="127.0.0.1", port=isolated_database.port, user="root", password="",
+                                    database=isolated_database.database, use_pure=True)
+    cursor = admin.cursor()
+    try:
+        cursor.execute("INSERT INTO ost_user (id, name, default_email_id) VALUES (800000, 'Synthetic', 800001)")
+        cursor.executemany("INSERT INTO ost_user_email (id, user_id, address) VALUES (%s, 800000, %s)",
+                           [(800000 + i, f"synthetic{i}@example.test") for i in range(1, 24)])
+        cursor.executemany("INSERT INTO ost_list_items (id, list_id, status, value) VALUES (%s, 3, 1, %s)",
+                           [(800000 + i, f"Synthetic {i}") for i in range(1, 13)])
+        cursor.executemany("INSERT INTO ost_ticket (ticket_id, number, user_id, status_id, created) "
+                           "VALUES (%s, %s, %s, 1, '2026-11-10')",
+                           [(800000 + i, f"SYNTHETIC{i}", 800000 + i) for i in range(125)] +
+                           [(900000 + i, f"PROFILE{i}", 800000) for i in range(1, 13)])
+        cursor.executemany("INSERT INTO ost_ticket__cdata (ticket_id, listaEmpresa) VALUES (%s, %s)",
+                           [(900000 + i, str(800000 + i)) for i in range(1, 13)])
+        admin.commit()
+        groups, offset = [], 0
+        while True:
+            page = result(tools.ticket_report("user", limit=100, offset=offset))
+            groups.extend(page["groups"])
+            if not page["has_more"]:
+                break
+            offset = page["next_offset"]
+        keys = [g["key"] for g in groups]
+        assert set(range(800000, 800125)) <= set(keys)
+        assert len(keys) == len(set(keys)) and len(keys) > 100
+        emails, companies, email_offset, company_offset = [], [], 0, 0
+        while True:
+            profile = result(tools.get_user(800000, emails_offset=email_offset or 0,
+                                            companies_offset=company_offset or 0))["rows"][0]
+            # Completed collections may be fetched again but are never accumulated twice.
+            if email_offset is not None:
+                emails.extend(profile["emails"])
+            if company_offset is not None:
+                companies.extend(profile["companies"])
+            email_offset = profile["emails_pagination"]["next_offset"] if email_offset is not None else None
+            company_offset = profile["companies_pagination"]["next_offset"] if company_offset is not None else None
+            if email_offset is None and company_offset is None:
+                break
+        assert len(emails) == len({email["address"] for email in emails}) == 23
+        assert len(companies) == len({company["company_id"] for company in companies}) == 12
+    finally:
+        cursor.execute("DELETE FROM ost_ticket__cdata WHERE ticket_id BETWEEN 900001 AND 900012")
+        cursor.execute("DELETE FROM ost_ticket WHERE ticket_id BETWEEN 800000 AND 800124 "
+                       "OR ticket_id BETWEEN 900001 AND 900012")
+        cursor.execute("DELETE FROM ost_list_items WHERE id BETWEEN 800001 AND 800012")
+        cursor.execute("DELETE FROM ost_user_email WHERE user_id = 800000")
+        cursor.execute("DELETE FROM ost_user WHERE id = 800000")
+        admin.commit()
+        cursor.close()
+        admin.close()
+
+
 def test_agent_report_counts_workload_activity_and_support_role(live):
     report = result(tools.get_agent_report(10, date_from="2026-11-01", date_to="2026-11-30"))
     assert report["agent"]["name"] == "Luis Prueba" and report["agent"]["department"] == "Desarrollo"

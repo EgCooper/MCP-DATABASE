@@ -131,6 +131,7 @@ class CompanyTicketsArguments(SearchTicketsArguments):
 class TicketReportArguments(TicketFilters):
     group_by: ReportGroup
     limit: Annotated[int, Field(strict=True, ge=1, le=MAX_REPORT_GROUPS)] = 50
+    offset: Offset = 0
     include_time: Flag = False
 
 
@@ -178,6 +179,8 @@ class UserSearchArguments(NoArguments):
 
 class UserArguments(NoArguments):
     user_id: RecordId
+    emails_offset: Offset = 0
+    companies_offset: Offset = 0
 
 
 class AgentReportArguments(NoArguments):

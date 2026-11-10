@@ -210,6 +210,6 @@ def find_users(query: str, limit: int = 20, offset: int = 0) -> str:
     return _run("find_users", UserSearchArguments, locals(), tickets.users)
 
 
-def get_user(user_id: int) -> str:
+def get_user(user_id: int, emails_offset: int = 0, companies_offset: int = 0) -> str:
     """Customer profile: emails, ticket totals, companies and latest ticket."""
     return _run("get_user", UserArguments, locals(), tickets.user_profile)
