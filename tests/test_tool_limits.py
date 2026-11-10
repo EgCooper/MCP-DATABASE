@@ -74,7 +74,7 @@ def test_published_schemas_match_strict_runtime_contract():
     definitions = asyncio.run(mcp.list_tools())
     assert all(tool.outputSchema is None for tool in definitions)
     schemas = {t.name: t.inputSchema for t in definitions}
-    assert len(schemas) == 16
+    assert len(schemas) == 18
     assert all(schema["additionalProperties"] is False for schema in schemas.values())
     # Several LLM tool APIs reject combinators at the root of an input schema.
     assert not any({"oneOf", "anyOf", "allOf"} & set(schema) for schema in schemas.values())

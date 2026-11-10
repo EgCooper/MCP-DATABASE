@@ -9,52 +9,14 @@ import asyncio
 from datetime import datetime, timedelta
 import json
 import os
-from uuid import uuid4
 
 import mysql.connector
 import pytest
 
 from mcp_mysql import db, tickets, tools
-from mcp_mysql.access import all_query_tables
-from mcp_mysql.config import MySQLConfig
 from mcp_mysql.server import mcp
 
 pytestmark = pytest.mark.skipif(not os.environ.get("MCP_TEST_MYSQL_PORT"), reason="Requires an explicit disposable MySQL port")
-
-from mysql_fixture import TABLES, _seed, _grant_policy_columns
-
-
-@pytest.fixture(scope="module")
-def isolated_database():
-    port = int(os.environ["MCP_TEST_MYSQL_PORT"])
-    token = uuid4().hex[:12]
-    schema, reader = f"mcp_query_test_{token}", f"reader_{token}"
-    account = f"'{reader}'@'%'"
-    admin = mysql.connector.connect(host="127.0.0.1", port=port, user="root", password="", use_pure=True)
-    cursor = admin.cursor()
-    try:
-        cursor.execute(f"CREATE DATABASE `{schema}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
-        cursor.execute(f"USE `{schema}`")
-        for table, columns in TABLES.items():
-            cursor.execute(f"CREATE TABLE `{table}` ({columns})")
-        _seed(cursor)
-        admin.commit()
-        cursor.execute(f"CREATE USER {account} IDENTIFIED BY 'test-only'")
-        _grant_policy_columns(cursor, schema, account)
-        ca = os.environ.get("MCP_TEST_MYSQL_CA")
-        yield MySQLConfig(host="127.0.0.1", port=port, user=reader, password="test-only", database=schema,
-                          ssl_ca=ca, ssl_verify_identity=bool(ca))
-    finally:
-        cursor.execute(f"DROP DATABASE IF EXISTS `{schema}`")
-        cursor.execute(f"DROP USER IF EXISTS {account}")
-        cursor.close()
-        admin.close()
-
-
-@pytest.fixture
-def live(isolated_database, monkeypatch):
-    monkeypatch.setattr(MySQLConfig, "from_env", lambda: isolated_database)
-    tickets.clear_schema_cache()
 
 
 def result(encoded):
@@ -368,6 +330,8 @@ def test_mcp_handlers_work_with_real_sql_and_read_only_sessions(live, monkeypatc
             ("ticket_report", {"group_by": "agent", "include_time": True}),
             ("get_ticket", {"number": "000002"}),
             ("get_ticket_thread", {"ticket_id": 90002, "limit": 1}),
+            ("search_ticket_content", {"query": "Mensaje", "fields": ["thread_body"], "ticket_id": 90002}),
+            ("read_ticket_text", {"ticket_id": 90002, "field": "thread_body", "entry_id": 2}),
             ("find_agents", {"name": "Ana"}), ("get_agent_report", {"staff_id": 7}),
             ("find_users", {"query": "Cliente"}), ("get_user", {"user_id": 8}),
         ]:

@@ -12,7 +12,7 @@ TABLES = {
     # Optional custom fields horaCompensada, fechaInicio... are deliberately absent; secret_token is unapproved.
     "ost_ticket__cdata": "ticket_id INT UNSIGNED PRIMARY KEY, priority MEDIUMTEXT, subject MEDIUMTEXT, listaEmpresa MEDIUMTEXT, "
                          "tipoSolicitud MEDIUMTEXT, causa MEDIUMTEXT, analisis MEDIUMTEXT, solucion MEDIUMTEXT, time MEDIUMTEXT, "
-                         "timeExtra MEDIUMTEXT, apoyo1 MEDIUMTEXT, timeApoyo1 MEDIUMTEXT, apoyo2 MEDIUMTEXT, timeApoyo2 MEDIUMTEXT, "
+                         "timeExtra MEDIUMTEXT, ambiente MEDIUMTEXT, apoyo1 MEDIUMTEXT, timeApoyo1 MEDIUMTEXT, apoyo2 MEDIUMTEXT, timeApoyo2 MEDIUMTEXT, "
                          "apoyo3 MEDIUMTEXT, timeApoyo3 MEDIUMTEXT, secret_token MEDIUMTEXT",
     "ost_ticket_status": "id INT PRIMARY KEY, name VARCHAR(60), state VARCHAR(16), sort INT UNSIGNED",
     "ost_ticket_priority": "priority_id TINYINT PRIMARY KEY, priority VARCHAR(60), priority_desc VARCHAR(30), priority_urgency TINYINT UNSIGNED",

@@ -37,7 +37,7 @@ def column(name):
 SUPPORT_TOOLS = {
     "test_connection", "list_catalog", "find_companies", "list_company_tickets",
     "search_tickets", "count_tickets", "ticket_report", "get_ticket", "get_ticket_thread",
-    "find_agents", "get_agent_report", "find_users", "get_user",
+    "find_agents", "get_agent_report", "find_users", "get_user", "search_ticket_content", "read_ticket_text",
 }
 EXPLORATION = {"list_tables", "describe_table", "sample_rows"}
 

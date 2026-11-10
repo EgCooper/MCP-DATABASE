@@ -32,6 +32,8 @@ que hable MCP puede consumirlo con el token.
 | `ticket_report` | Conteos por estado, agente, empresa, mes, etc., con horas opcionales |
 | `get_ticket` | Detalle completo: prioridad, SLA, solicitante, colaboradores, apoyo, horas y resumen del hilo |
 | `get_ticket_thread` | Conversación en texto plano, con mensajes, respuestas y notas internas |
+| `search_ticket_content` | Buscar menciones en todo el texto almacenado y localizar ticket, campo o mensaje |
+| `read_ticket_text` | Leer un campo o mensaje completo por fragmentos, con posición y revisión |
 | `find_agents` | Buscar agentes y obtener su `staff_id` |
 | `get_agent_report` | Carga actual, cierres por actor del historial, actividad, apoyo y tiempo acumulado de tickets |
 | `find_users` | Buscar clientes por nombre o correo y obtener su `user_id` |
@@ -148,7 +150,7 @@ línea, LibreChat confunde el token con OAuth y no carga las herramientas.
 Reinicia LibreChat **después** de que el MCP esté sano y verifica:
 ```bash
 docker restart LibreChat
-docker logs LibreChat 2>&1 | grep "\[MCP\] Initialized" | tail -1   # ... 1 configured server and 13 tools
+docker logs LibreChat 2>&1 | grep "\[MCP\] Initialized" | tail -1   # ... 1 configured server and 15 tools
 ```
 
 Actualizaciones, cambio de token, diagnóstico, volver a una versión anterior y usuarios de
@@ -204,7 +206,9 @@ no disponible devuelve `null` y aparece en `unavailable_fields`; una sección di
 sin datos devuelve una lista vacía. Los campos anidados usan rutas como
 `emails.is_default` o `tickets.as_collaborator`.
 
-Hoy todos los consumidores comparten un mismo token.
+Por decisión de alcance, todos los usuarios autorizados y agentes comparten acceso a
+todos los tickets y notas internas. Los consumidores usan un mismo token; no se filtran
+tickets por usuario o departamento del consumidor.
 
 `get_agent_report.actor_activity.tickets_closed_by_agent` cuenta los tickets cerrados
 por el actor del historial (`uid`/`uid_type`), independientemente del asignado actual.
@@ -216,6 +220,44 @@ explica cada métrica; un historial no disponible devuelve `actor_activity=null`
 `find_agents` tolera espacios repetidos en los nombres y devuelve `resolution`.
 Cuando `must_wait_for_user=true`, el asistente debe pedir una elección antes de
 consultar cifras de un candidato; no debe elegir por el estado activo/inactivo.
+
+### Buscar menciones y leer textos completos
+
+Para «¿dónde se menciona X?», usar `search_ticket_content(query="X")`. Busca sobre
+asunto, causa, análisis, solución, ambiente y títulos/cuerpos de mensajes, respuestas
+y notas internas completos, incluso después de los límites de las vistas previas.
+Acepta los filtros de tickets, `ticket_id`, `fields` y `entry_types` para los resultados
+del hilo. Cada fila contiene ticket/número, campo, `entry_id` cuando corresponde,
+un fragmento, `match_offset`, `snippet_offset` y `revision`.
+
+La búsqueda es una subcadena literal del texto almacenado, con la colación de la base:
+no interpreta `%` o `_` como comodines. No normaliza HTML/entidades, no es semántica
+y no busca dentro de adjuntos. Por ejemplo, una frase separada por etiquetas HTML
+puede no coincidir con su versión visible. Se devuelve la primera aparición de cada
+campo o mensaje; varias filas pueden corresponder al mismo ticket. No inferir un
+total de tickets a partir del tamaño de la página.
+
+Se devuelven hasta 10 coincidencias por llamada. Seguir `next_cursor`, manteniendo
+consulta, campos y filtros, mientras `has_more=true`. `unavailable_fields` informa
+fuentes ausentes y `coverage_complete=false` impide afirmar que se buscó en todas.
+Las búsquedas amplias pueden requerir filtros de empresa o fechas para completar
+dentro del timeout, sin crear índices ni modificar la base desde el MCP.
+
+`read_ticket_text` devuelve todos los caracteres de una fuente mediante páginas de
+hasta 2.000 caracteres, sin el recorte de las vistas previas:
+
+```json
+{"ticket_id":123,"field":"thread_body","entry_id":456,"offset":0,"limit":2000}
+```
+
+Los campos son `subject`, `cause`, `analysis`, `solution`, `environment`,
+`thread_title` y `thread_body`; `entry_id` se exige solo para los dos últimos.
+El texto se entrega como fuente almacenada, conservando etiquetas, entidades y
+saltos de línea. Los offsets cuentan caracteres desde cero, no bytes. Para completar
+la lectura, seguir `next_offset` hasta `has_more=false`, reenviando la `revision`
+recibida. `CONTENT_CHANGED` indica una edición: reiniciar desde cero sin la revisión
+anterior o informar al usuario. Un texto `null` no equivale a una cadena vacía.
+Para leer una coincidencia directamente, usar su `snippet_offset` y `revision`.
 
 ## Seguridad
 
@@ -265,7 +307,7 @@ con solo los permisos por columna de la política, y los eliminan al terminar:
 
 ```bash
 docker run --rm -d --name mcp-it -p 127.0.0.1:33061:3306 -e MYSQL_ALLOW_EMPTY_PASSWORD=yes mariadb:10.3
-MCP_TEST_MYSQL_PORT=33061 .venv/bin/python -m pytest -q tests/test_mysql_integration.py
+MCP_TEST_MYSQL_PORT=33061 .venv/bin/python -m pytest -q tests/test_mysql_integration.py tests/test_content_integration.py
 docker stop mcp-it
 ```
 

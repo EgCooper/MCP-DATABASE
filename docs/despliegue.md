@@ -52,7 +52,7 @@ docker compose up -d --build --wait
 docker restart LibreChat
 
 # 4. Verificar
-docker logs LibreChat 2>&1 | grep "\[MCP\] Initialized" | tail -1    # debe decir 13 tools
+docker logs LibreChat 2>&1 | grep "\[MCP\] Initialized" | tail -1    # mysql: 15 herramientas de negocio
 ```
 
 - `--build` reconstruye la imagen con el código nuevo. Sin esta opción, compose reutiliza la
@@ -65,16 +65,16 @@ docker logs LibreChat 2>&1 | grep "\[MCP\] Initialized" | tail -1    # debe deci
 
 Las correcciones de tipos de IDs y salida visible de MiniMax requieren la imagen
 adaptada de LibreChat y `reasoning_split: true`. Su código se conserva en el paquete
-local `extras/.local-artifacts/librechat-p1p2.tar.gz`, excluido del repositorio MCP. Si se
+local `extras/.local-artifacts/librechat-p3.tar.gz`, excluido del repositorio MCP. Si se
 despliega en otro host, transferir también ese archivo; `git pull` no lo descarga.
 
 Para construir la imagen desde el paquete en este servidor:
 
 ```bash
 mkdir -p "$HOME/.local/share/librechat-osticket"
-tar -xzf /home/vpinto/Documents/MCP-DATABASE/extras/.local-artifacts/librechat-p1p2.tar.gz \
+tar -xzf /home/vpinto/Documents/MCP-DATABASE/extras/.local-artifacts/librechat-p3.tar.gz \
   -C "$HOME/.local/share/librechat-osticket"
-cd "$HOME/.local/share/librechat-osticket/librechat-p1p2"
+cd "$HOME/.local/share/librechat-osticket/librechat-p3"
 docker build -f deploy/librechat/Dockerfile -t librechat:osticket-mcp-adapter .
 ```
 
@@ -466,7 +466,7 @@ docker exec -it LibreChat npm run delete-user
    cp /ruta/segura/.env /opt/mcp-osticket/.env && chmod 600 /opt/mcp-osticket/.env
    cd /opt/mcp-osticket && docker compose up -d --build --wait
    ```
-4. `docker restart LibreChat` y verificar que diga `13 tools` (sección 3).
+4. `docker restart LibreChat` y verificar que diga `15 tools` (sección 3).
 5. Extraer el certificado raíz de Caddy, instalarlo en las PCs y verificar el HTTPS
    (sección 6).
 6. Permitir la IP del servidor en el Security Group de la base y en la cuenta de MariaDB

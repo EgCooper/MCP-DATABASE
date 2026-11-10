@@ -16,7 +16,8 @@ from mcp_mysql.errors import ErrorCode
 from mcp_mysql.responses import MAX_FIELD_CHARACTERS, encode_response, error_response, exception_response
 from mcp_mysql.validation import (
     MAX_SAMPLE_ROWS, AgentReportArguments, CatalogArguments, CompanySearchArguments, CompanyTicketsArguments,
-    PeopleArguments, SearchTicketsArguments, ThreadArguments, TicketArguments, TicketFilters,
+    PeopleArguments, ReadTicketTextArguments, SearchTicketContentArguments, SearchTicketsArguments,
+    ThreadArguments, TicketArguments, TicketFilters,
     TicketReportArguments, UserArguments, UserSearchArguments,
 )
 
@@ -193,6 +194,17 @@ def get_ticket(ticket_id: int | None = None, number: str | None = None) -> str:
 def get_ticket_thread(ticket_id: int, **options) -> str:
     """Read a ticket's thread as plain text, with a continuation cursor."""
     return _run("get_ticket_thread", ThreadArguments, {"ticket_id": ticket_id, **options}, tickets.thread)
+
+
+def search_ticket_content(query: str, **options) -> str:
+    """Find literal mentions throughout stored ticket text, including complete thread bodies."""
+    return _run('search_ticket_content', SearchTicketContentArguments, {'query': query, **options}, tickets.search_content)
+
+
+def read_ticket_text(ticket_id: int, field: str, **options) -> str:
+    """Read every stored source character of one field using bounded pages and revision guards."""
+    return _run('read_ticket_text', ReadTicketTextArguments,
+                {'ticket_id': ticket_id, 'field': field, **options}, tickets.read_text)
 
 
 def find_agents(name: str, limit: int = 20, offset: int = 0) -> str:

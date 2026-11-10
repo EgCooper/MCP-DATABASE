@@ -56,7 +56,7 @@ def test_sdk_http_initialization_tools_call_auth_and_session_shutdown(monkeypatc
                             assert initialized.serverInfo.name == "mcp-mysql"
                             definitions = (await session.list_tools()).tools
                             assert {tool.name for tool in definitions} == set(TOOL_ARGUMENT_MODELS) - EXPLORATION_TOOLS
-                            assert len(definitions) == 13 and session_id()
+                            assert len(definitions) == 15 and session_id()
                             result = await session.call_tool("test_connection", {})
                             assert not result.isError
                             assert json.loads(result.content[0].text)["data"]["status"] == "connected"

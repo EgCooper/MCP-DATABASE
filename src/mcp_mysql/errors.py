@@ -33,6 +33,10 @@ class AmbiguousRecordError(ValueError):
     """A lookup expected a single record but found more than one."""
 
 
+class ContentChangedError(ValueError):
+    """A source field changed between searches or text pages."""
+
+
 class ErrorCode(StrEnum):
     INVALID_ARGUMENTS = "INVALID_ARGUMENTS"
     UNKNOWN_TOOL = "UNKNOWN_TOOL"
@@ -41,6 +45,7 @@ class ErrorCode(StrEnum):
     NOT_FOUND = "NOT_FOUND"
     SCHEMA_UNAVAILABLE = "SCHEMA_UNAVAILABLE"
     AMBIGUOUS_MATCH = "AMBIGUOUS_MATCH"
+    CONTENT_CHANGED = "CONTENT_CHANGED"
     DATABASE_AUTHENTICATION_FAILED = "DATABASE_AUTHENTICATION_FAILED"
     DATABASE_PERMISSION_DENIED = "DATABASE_PERMISSION_DENIED"
     DATABASE_UNAVAILABLE = "DATABASE_UNAVAILABLE"
@@ -62,6 +67,7 @@ ERROR_DETAILS = MappingProxyType({
     ErrorCode.NOT_FOUND: ("The requested record was not found.", False),
     ErrorCode.SCHEMA_UNAVAILABLE: ("The database does not provide the fields required for this query. Contact the administrator.", False),
     ErrorCode.AMBIGUOUS_MATCH: ("More than one record matches this identifier. Use its numeric ID.", False),
+    ErrorCode.CONTENT_CHANGED: ("Text changed. Restart reading at offset 0 without the previous revision.", False),
     ErrorCode.DATABASE_AUTHENTICATION_FAILED: (
         "Database authentication failed. Contact the service administrator.", False,
     ),
@@ -105,6 +111,8 @@ def classify_error(exc: Exception) -> ErrorCode:
         return ErrorCode.NOT_FOUND
     if isinstance(exc, AmbiguousRecordError):
         return ErrorCode.AMBIGUOUS_MATCH
+    if isinstance(exc, ContentChangedError):
+        return ErrorCode.CONTENT_CHANGED
     if isinstance(exc, ConnectionTimeoutError):
         return ErrorCode.DATABASE_TIMEOUT
     if isinstance(exc, (ReadTimeoutError, WriteTimeoutError, TimeoutError)):

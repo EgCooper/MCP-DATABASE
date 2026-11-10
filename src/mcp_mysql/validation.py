@@ -3,6 +3,9 @@
 from types import MappingProxyType
 from typing import Annotated, Literal
 from datetime import date
+import base64
+import hashlib
+import json
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
@@ -59,6 +62,8 @@ ISODate = Annotated[
 
 TicketState = Literal["open", "closed", "archived", "deleted"]
 EntryType = Literal["message", "response", "internal_note"]
+ContentField = Literal["subject", "cause", "analysis", "solution", "environment", "thread_title", "thread_body"]
+CONTENT_FIELDS = ("subject", "cause", "analysis", "solution", "environment", "thread_title", "thread_body")
 ReportGroup = Literal[
     "status", "state", "department", "agent", "company", "priority",
     "help_topic", "request_type", "source", "user", "month",
@@ -166,6 +171,71 @@ class ThreadArguments(NoArguments):
         return self
 
 
+class ReadTicketTextArguments(NoArguments):
+    ticket_id: RecordId
+    field: ContentField
+    entry_id: RecordId | None = None
+    offset: Annotated[int, Field(strict=True, ge=0, le=4294967295)] = 0
+    limit: Annotated[int, Field(strict=True, ge=1, le=2000)] = 2000
+    revision: Annotated[str, Field(strict=True, min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")] | None = None
+
+    @model_validator(mode="after")
+    def entry_matches_field(self):
+        if self.field.startswith("thread_") != (self.entry_id is not None):
+            raise ValueError("Provide entry_id exactly when reading a thread field")
+        return self
+
+
+class SearchTicketContentArguments(TicketFilters):
+    query: SearchText
+    fields: Annotated[list[ContentField], Field(min_length=1, max_length=7)] | None = None
+    ticket_id: RecordId | None = None
+    entry_types: Annotated[list[EntryType], Field(min_length=1, max_length=3)] | None = None
+    limit: Annotated[int, Field(strict=True, ge=1, le=10)] = 10
+    cursor: Annotated[str, Field(strict=True, min_length=20, max_length=512, pattern=r"^[A-Za-z0-9_-]+$")] | None = None
+
+    def _cursor_identity(self) -> str:
+        values = self.model_dump(exclude={"cursor", "limit"})
+        values["fields"] = list(self.fields or CONTENT_FIELDS)
+        encoded = json.dumps(values, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        return hashlib.sha256(encoded.encode()).hexdigest()
+
+    def cursor_position(self) -> tuple[str, int] | None:
+        if self.cursor is None:
+            return None
+        try:
+            raw = base64.b64decode(self.cursor + "=" * (-len(self.cursor) % 4), altchars=b"-_", validate=True)
+            value = json.loads(raw)
+            if (not isinstance(value, dict) or set(value) != {"v", "field", "after", "identity"}
+                    or type(value["v"]) is not int or value["v"] != 1
+                    or value["field"] not in (self.fields or CONTENT_FIELDS)
+                    or type(value["after"]) is not int or not 1 <= value["after"] <= 2147483647
+                    or value["identity"] != self._cursor_identity()):
+                raise ValueError("Invalid continuation")
+            return value["field"], value["after"]
+        except (ValueError, TypeError, KeyError, UnicodeError) as error:
+            raise ValueError("Cursor must belong to the same content query and filters") from error
+
+    def make_cursor(self, field: str, after: int) -> str:
+        value = {"v": 1, "field": field, "after": after, "identity": self._cursor_identity()}
+        return base64.urlsafe_b64encode(json.dumps(value, separators=(",", ":")).encode()).decode().rstrip("=")
+
+    @model_validator(mode="after")
+    def valid_content_scope(self):
+        if self.fields is not None:
+            if len(set(self.fields)) != len(self.fields):
+                raise ValueError("Duplicate content fields")
+            self.fields = sorted(self.fields, key=CONTENT_FIELDS.index)
+        if self.entry_types is not None:
+            if len(set(self.entry_types)) != len(self.entry_types):
+                raise ValueError("Duplicate entry types")
+            self.entry_types = sorted(self.entry_types)
+            if not any(field.startswith("thread_") for field in (self.fields or CONTENT_FIELDS)):
+                raise ValueError("entry_types requires a thread field")
+        self.cursor_position()
+        return self
+
+
 class PeopleArguments(NoArguments):
     name: CompanyName
     limit: BusinessLimit = 20
@@ -213,6 +283,8 @@ TOOL_ARGUMENT_MODELS = MappingProxyType({
     "ticket_report": TicketReportArguments,
     "get_ticket": TicketArguments,
     "get_ticket_thread": ThreadArguments,
+    "search_ticket_content": SearchTicketContentArguments,
+    "read_ticket_text": ReadTicketTextArguments,
     "find_agents": PeopleArguments,
     "get_agent_report": AgentReportArguments,
     "find_users": UserSearchArguments,
