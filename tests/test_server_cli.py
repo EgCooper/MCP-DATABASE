@@ -183,6 +183,15 @@ def test_gate_logs_a_rejected_path_on_one_escaped_line(caplog):
     assert message == "http_unauthorized client=127.0.0.1 path=/mcp\\r\\nhttp_authorized client=1.2.3.4\\x1b[2J"
 
 
+def test_gate_with_several_authorization_headers_checks_only_the_last():
+    gate = server.HttpGate(_echo_app, TOKEN)
+    wrong_last = [("Authorization", f"Bearer {TOKEN}"), ("Authorization", "Bearer wrong")]
+    right_last = [("Authorization", "Bearer wrong"), ("Authorization", f"Bearer {TOKEN}")]
+    assert _request(gate, headers=wrong_last).status_code == 401
+    response = _request(gate, headers=right_last)
+    assert response.status_code == 200 and response.text == "reached"
+
+
 def test_gate_passes_the_correct_token_through():
     response = _request(server.HttpGate(_echo_app, TOKEN), headers={"Authorization": f"Bearer {TOKEN}"})
     assert response.status_code == 200 and response.text == "reached"
