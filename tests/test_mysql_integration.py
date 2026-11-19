@@ -6,13 +6,17 @@ column-level SELECT on the access policy columns, then removes both.
 """
 
 import asyncio
+from dataclasses import replace
 import json
 import os
+import time
 
 import mysql.connector
 import pytest
 
 from mcp_mysql import db, tools
+from mcp_mysql.config import MySQLConfig
+from mcp_mysql.errors import ErrorCode, classify_error
 from mcp_mysql.server import mcp
 
 pytestmark = pytest.mark.skipif(not os.environ.get("MCP_TEST_MYSQL_PORT"), reason="Requires an explicit disposable MySQL port")
@@ -346,6 +350,21 @@ def test_mcp_handlers_work_with_real_sql_and_read_only_sessions(live, monkeypatc
     with pytest.raises(mysql.connector.Error):
         db.fetch_all("UPDATE ost_ticket SET number = 'forbidden' WHERE ticket_id = 90001")
     assert result(tools.get_ticket(ticket_id=90001))["rows"][0]["number"] == "000001"
+
+
+def test_the_server_cuts_a_query_at_the_configured_timeout(live, isolated_database, monkeypatch):
+    monkeypatch.setattr(MySQLConfig, "from_env", lambda: replace(isolated_database, query_timeout_ms=300))
+    db.clear_pool()
+    started = time.monotonic()
+    # About 150^4 joined rows take far longer than the timeout. SLEEP and BENCHMARK are
+    # unusable here: an interrupted SLEEP or BENCHMARK returns a value instead of an error.
+    # SUM of every row, not COUNT: MySQL 8 answers COUNT over a cross join from row counts.
+    with pytest.raises(mysql.connector.Error) as caught:
+        db.fetch_one("SELECT SUM(a.ticket_id + b.ticket_id + c.ticket_id + d.ticket_id) AS total"
+                     " FROM ost_ticket a, ost_ticket b, ost_ticket c, ost_ticket d")
+    assert time.monotonic() - started < 10
+    assert classify_error(caught.value) is ErrorCode.QUERY_TIMEOUT
+    db.clear_pool()
 
 
 def test_pooled_connections_stay_read_only_and_always_see_fresh_data(live, isolated_database, monkeypatch):
