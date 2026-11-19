@@ -102,7 +102,7 @@ Edita `.env`:
 | `MYSQL_SSL_CA`, `MYSQL_SSL_VERIFY_IDENTITY` | TLS con verificación de certificado, si la base lo admite |
 | `OSTICKET_COMPANY_LIST_ID` | Lista de osTicket con las empresas (3 por defecto) |
 | `MYSQL_QUERY_TIMEOUT_MS` | Tiempo máximo por consulta (15000) |
-| `MCP_MAX_DB_CONNECTIONS` | Conexiones simultáneas a la base (8) |
+| `MCP_MAX_DB_CONNECTIONS` | Conexiones simultáneas a la base (8), incluidas las que el pool mantiene abiertas. `/ready` y `/metrics` abren como máximo una más, aparte |
 | `MCP_DB_POOL_SIZE` | Conexiones de solo lectura que se reutilizan entre llamadas (4; `0` lo desactiva) |
 | `MCP_ENABLE_EXPLORATION_TOOLS` | Herramientas de exploración del esquema (`false`) |
 
