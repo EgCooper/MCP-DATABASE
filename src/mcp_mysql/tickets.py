@@ -17,7 +17,7 @@ from mcp_mysql.access import all_query_tables, get_query_columns
 from mcp_mysql.config import MySQLConfig, schema_cache_seconds
 from mcp_mysql.errors import AccessDeniedError, AmbiguousRecordError, RecordNotFoundError, SchemaUnavailableError
 from mcp_mysql.responses import MAX_FIELD_CHARACTERS, Result
-from mcp_mysql.threads import BODY_FETCH_LIMIT, ENTRY_CODES, ENTRY_TYPES
+from mcp_mysql.threads import ENTRY_TYPES
 from mcp_mysql.validation import (
     MAX_OFFSET, AgentReportArguments, CatalogArguments, CompanySearchArguments, CompanyTicketsArguments,
     PeopleArguments, ReadTicketTextArguments, SearchTicketContentArguments, SearchTicketsArguments,
@@ -509,14 +509,19 @@ def _parse_assignee(value) -> dict | None:
     return {"staff_id": None, "team_id": None, "name": text}
 
 
+def _support_answers_available(schema: Schema) -> bool:
+    """Whether the custom form answers that name the support staff (apoyo1..3) can be read."""
+    return (schema.has("ost_form_entry", "object_id") and schema.has("ost_form_entry", "object_type")
+            and schema.has("ost_form_entry_values", "value") and schema.has("ost_form_field", "name"))
+
+
 def _support_staff(schema: Schema, ticket_id: int, row: dict) -> list[dict]:
     """Support people (apoyo1..3) with their recorded time.
 
     The form answers hold the staff ID; the cached ticket data often keeps only a name.
     """
     answers: dict[str, str] = {}
-    if (schema.has("ost_form_entry", "object_id") and schema.has("ost_form_entry", "object_type")
-            and schema.has("ost_form_entry_values", "value") and schema.has("ost_form_field", "name")):
+    if _support_answers_available(schema):
         placeholders = ", ".join("%s" for _ in SUPPORT_FIELDS)
         for answer in db.fetch_all(
             f"""SELECT f.name AS field, LEFT(v.value, %s) AS value
@@ -776,8 +781,7 @@ def user_profile(arguments: UserArguments) -> dict:
 
 def _support_activity(schema: Schema, staff_id: int, filters: TicketFilters, include_time: bool) -> dict | None:
     """Tickets where the agent was recorded as support staff (apoyo1..3)."""
-    if not all((schema.has("ost_form_entry", "object_id"), schema.has("ost_form_entry", "object_type"),
-                schema.has("ost_form_entry_values", "value"), schema.has("ost_form_field", "name"))):
+    if not _support_answers_available(schema):
         return None
     query = TicketQuery(schema, _company_list_id())
     where, parameters, _, _ = query.where(filters)

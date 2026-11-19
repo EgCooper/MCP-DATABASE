@@ -1,9 +1,6 @@
-import json
 from unittest.mock import Mock
 
-import pytest
-
-from mcp_mysql import db, readiness, server, tools, observability
+from mcp_mysql import readiness, server, tools, observability
 from test_support_tools import database, data
 from test_server_cli import _request, _echo_app, TOKEN
 

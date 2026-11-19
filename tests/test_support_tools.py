@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from mcp_mysql import access, db, tickets, tools
+from mcp_mysql import access, db, threads, tickets, tools
 from mcp_mysql.server import mcp
 
 
@@ -227,7 +227,7 @@ def test_newest_first_pages_backwards_with_a_before_cursor(database):
 
 def test_bodies_longer_than_the_fetch_limit_are_marked_truncated(database):
     thread_counts(database, total=1)
-    long_html = "<div>" + "x" * (tickets.BODY_FETCH_LIMIT - 5)
+    long_html = "<div>" + "x" * (threads.BODY_FETCH_LIMIT - 5)
     database.on("FROM ost_thread_entry e", [{"entry_id": 1, "type_code": "M", "body": long_html, "body_format": "html"}])
     payload = json.loads(tools.get_ticket_thread(90))
     assert payload["meta"]["truncated"] is True

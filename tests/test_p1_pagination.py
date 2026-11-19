@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from mcp_mysql import tickets, tools
+from mcp_mysql import tools
 from mcp_mysql.responses import MAX_RESPONSE_BYTES, encode_response
 from test_support_tools import database, data
 

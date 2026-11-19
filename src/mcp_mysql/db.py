@@ -93,12 +93,7 @@ def get_connection(config: MySQLConfig | None = None) -> MySQLConnection:
     )
     setup_cursor = None
     try:
-        server_info = getattr(conn, "server_info", None)
-        if server_info is None:
-            server_info = conn.get_server_info()
-        if not isinstance(server_info, str):
-            raise ConfigurationError("Cannot determine the database server type")
-        is_mariadb = "mariadb" in server_info.lower()
+        is_mariadb = _is_mariadb(conn)
         setup_cursor = conn.cursor()
         setup_cursor.execute("SET SESSION TRANSACTION READ ONLY")
         if is_mariadb:

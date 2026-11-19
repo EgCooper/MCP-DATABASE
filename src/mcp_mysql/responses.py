@@ -103,6 +103,19 @@ def exception_response(exc: Exception, *, operation: str) -> str:
     return error_response(classify_error(exc), operation=operation)
 
 
+def _continue_after(content: dict, count: int, total: int) -> bool:
+    """Point a paged response that lost items to the budget at the first omitted one."""
+    if count >= total or "has_more" not in content:
+        return False
+    content["has_more"] = True
+    if "next_offset" in content:
+        next_offset = content.get("offset", 0) + count
+        capped = next_offset > MAX_OFFSET
+        content["next_offset"] = None if capped else next_offset
+        content["pagination_limit_reached"] = capped
+    return True
+
+
 def encode_response(payload: dict | Result, *, is_sample: bool = False) -> str:
     """Preserve a complete prefix of items and report field and response clipping.
 
@@ -123,13 +136,7 @@ def encode_response(payload: dict | Result, *, is_sample: bool = False) -> str:
             content[collection] = payload[collection][:count]
             if collection == "rows":
                 content["row_count"] = count
-                if count < total and "has_more" in content:
-                    content["has_more"] = True
-                    if "next_offset" in content:
-                        next_offset = content.get("offset", 0) + count
-                        capped = next_offset > MAX_OFFSET
-                        content["next_offset"] = None if capped else next_offset
-                        content["pagination_limit_reached"] = capped
+                if _continue_after(content, count, total):
                     for cursor in ("next_after_entry_id", "next_before_entry_id"):
                         if cursor in content:
                             content[cursor] = content["rows"][-1]["entry_id"] if count else None
@@ -137,13 +144,7 @@ def encode_response(payload: dict | Result, *, is_sample: bool = False) -> str:
                 content["count"] = count
             elif collection == "groups":
                 content["group_count"] = count
-                if count < total and "has_more" in content:
-                    content["has_more"] = True
-                    if "next_offset" in content:
-                        next_offset = content.get("offset", 0) + count
-                        capped = next_offset > MAX_OFFSET
-                        content["next_offset"] = None if capped else next_offset
-                        content["pagination_limit_reached"] = capped
+                _continue_after(content, count, total)
         changes = _Changes()
         content = _normalize(content, "", changes, field_limit)
         if collection == "rows":

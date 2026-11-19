@@ -6,14 +6,13 @@ column-level SELECT on the access policy columns, then removes both.
 """
 
 import asyncio
-from datetime import datetime, timedelta
 import json
 import os
 
 import mysql.connector
 import pytest
 
-from mcp_mysql import db, tickets, tools
+from mcp_mysql import db, tools
 from mcp_mysql.server import mcp
 
 pytestmark = pytest.mark.skipif(not os.environ.get("MCP_TEST_MYSQL_PORT"), reason="Requires an explicit disposable MySQL port")
