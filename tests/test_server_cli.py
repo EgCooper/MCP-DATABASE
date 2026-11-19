@@ -175,6 +175,14 @@ def test_gate_rejects_missing_or_wrong_tokens_without_logging_them(headers, capl
     assert "http_unauthorized" in caplog.text and TOKEN not in caplog.text and "wrong" not in caplog.text
 
 
+def test_gate_logs_a_rejected_path_on_one_escaped_line(caplog):
+    with caplog.at_level(logging.WARNING, logger="mcp_mysql.security"):
+        response = _request(server.HttpGate(_echo_app, TOKEN), path="/mcp%0D%0Ahttp_authorized%20client=1.2.3.4%1B[2J")
+    assert response.status_code == 401
+    [message] = [record.getMessage() for record in caplog.records if record.name == "mcp_mysql.security"]
+    assert message == "http_unauthorized client=127.0.0.1 path=/mcp\\r\\nhttp_authorized client=1.2.3.4\\x1b[2J"
+
+
 def test_gate_passes_the_correct_token_through():
     response = _request(server.HttpGate(_echo_app, TOKEN), headers={"Authorization": f"Bearer {TOKEN}"})
     assert response.status_code == 200 and response.text == "reached"

@@ -350,7 +350,9 @@ class HttpGate:
             if not hmac.compare_digest(supplied, self._expected):
                 observability.unauthorized()
                 client = (scope.get("client") or ("unknown",))[0]
-                _SECURITY.warning("http_unauthorized client=%s path=%s", client, scope["path"][:64])
+                # The path is percent-decoded client input: escape it so it cannot forge log lines.
+                path = scope["path"][:64].encode("unicode_escape").decode("ascii")
+                _SECURITY.warning("http_unauthorized client=%s path=%s", client, path)
                 await _respond(send, 401, b'{"error":"unauthorized"}',
                                [(b"www-authenticate", b'Bearer realm="mcp-osticket"')])
                 return
