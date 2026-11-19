@@ -143,6 +143,35 @@ def test_report_time_totals_cover_filters_not_the_page(live):
     assert 'time_totals' not in result(tools.ticket_report('company'))
 
 
+def test_report_time_keeps_single_values_beyond_the_sql_time_range(live, isolated_database):
+    def recorded_minutes():
+        hhmm = result(tools.ticket_report('company', include_time=True))['time_totals']['recorded_time']['hhmm']
+        hours, minutes = hhmm.split(':')
+        return int(hours) * 60 + int(minutes)
+
+    admin = mysql.connector.connect(host="127.0.0.1", port=isolated_database.port, user="root", password="",
+                                    database=isolated_database.database, use_pure=True)
+    cursor = admin.cursor()
+    try:
+        cursor.execute("SELECT `time` FROM ost_ticket__cdata WHERE ticket_id = 90001")
+        (original,) = cursor.fetchone()
+        cursor.execute("UPDATE ost_ticket__cdata SET `time` = '1:00' WHERE ticket_id = 90001")
+        admin.commit()
+        base = recorded_minutes()
+        # The SQL TIME type stops at 838:59:59, so TIME_TO_SEC would cap this value.
+        cursor.execute("UPDATE ost_ticket__cdata SET `time` = ' 900:30 ' WHERE ticket_id = 90001")
+        admin.commit()
+        assert recorded_minutes() - base == 899 * 60 + 30
+        cursor.execute("UPDATE ost_ticket__cdata SET `time` = '1:00:59' WHERE ticket_id = 90001")
+        admin.commit()
+        assert recorded_minutes() == base
+    finally:
+        cursor.execute("UPDATE ost_ticket__cdata SET `time` = %s WHERE ticket_id = 90001", (original,))
+        admin.commit()
+        cursor.close()
+        admin.close()
+
+
 def test_customer_profile_offsets_execute_real_sql(live):
     first = result(tools.get_user(8))["rows"][0]
     second = result(tools.get_user(8, emails_offset=1, companies_offset=1))["rows"][0]

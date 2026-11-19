@@ -83,7 +83,8 @@ def test_report_groups_on_the_server_with_bound_time_patterns(database):
         "overtime": {"hhmm": "0:00", "hours": 0.0}, "unparsed_time_values": 1,
     }
     query, params = database.queries("GROUP BY group_key")[0]
-    assert "ORDER BY tickets DESC, group_key ASC" in query and "TIME_TO_SEC" in query
+    assert "ORDER BY tickets DESC, group_key ASC" in query and "* 3600" in query
+    assert "TIME_TO_SEC" not in query  # the SQL TIME type would cap values at 838:59:59
     assert tickets.DURATION_PATTERN in params and "open" in params
     assert result["filters"] == {"state": "open", "created_from": "2026-01-01"}
 

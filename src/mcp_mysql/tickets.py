@@ -138,8 +138,17 @@ def _duration(seconds) -> dict:
 
 
 def _seconds_sql(column: str) -> tuple[str, list]:
-    """Seconds of an h:mm text duration; anything else counts as zero."""
-    return f"CASE WHEN {column} REGEXP %s THEN TIME_TO_SEC(TRIM({column})) ELSE 0 END", [DURATION_PATTERN]
+    """Seconds of an h:mm[:ss] text duration; anything else counts as zero.
+
+    Arithmetic instead of TIME_TO_SEC: the SQL TIME type caps values at 838:59:59.
+    """
+    value = f"TRIM({column})"
+    hours = f"CAST(SUBSTRING_INDEX({value}, ':', 1) AS UNSIGNED)"
+    minutes = f"CAST(SUBSTRING_INDEX(SUBSTRING_INDEX({value}, ':', 2), ':', -1) AS UNSIGNED)"
+    seconds = (f"IF(LOCATE(':', {value}, LOCATE(':', {value}) + 1) > 0, "
+               f"CAST(SUBSTRING_INDEX({value}, ':', -1) AS UNSIGNED), 0)")
+    return (f"CASE WHEN {column} REGEXP %s THEN {hours} * 3600 + {minutes} * 60 + {seconds} ELSE 0 END",
+            [DURATION_PATTERN])
 
 
 def _unparsed_sql(column: str) -> tuple[str, list]:
